@@ -1,0 +1,62 @@
+# .DS_Store
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+
+# Ignore all nested directories under data/splitted
+data/splitted/*/**
+
+# Keep Data_stat_summ folders inside every dataset
+!data/splitted/*/Splitted_Data_Statistics_Summary.ipynb
+!data/splitted/*/Splitted_Data_Statistics_Summary/
+
+# Ignore unimportant Report.* files
+Report.aux
+Report.bbl
+Report.blg
+Report.fdb_latexmk
+Report.fls
+Report.log
+Report.out
+Report.synctex.gz
+Report.tex
+Report.toc
+Report.apx
+literature.bib
+logo.jpg
+Report/sections
+Report/figures
+
+# Ignore unimportant slides.* files
+slides.aux
+slides.bbl
+slides.blg
+slides.fdb_latexmk
+slides.fls
+slides.log
+slides.out
+slides.synctex.gz
+slides.tex
+slides.toc
+slides.apx
+slides.bcf
+slides.nav
+slides.run.xml
+slides.snm
+literature.bib
+logo.jpg
+Presentation/sections
+Presentation/figures
+slides.bbl-SAVE-ERROR
+
+# Ignore unimportant files in models/ folders
+lightning_logs/
+optuna.db
