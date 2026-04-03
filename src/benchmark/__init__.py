@@ -1,2 +1,2 @@
 from .AnalystModel import AnalystModel
-from .EvaluateModel import EvaluateModel, Evaluator
+from .EvaluateModel import Evaluator, EvaluateModel

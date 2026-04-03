@@ -24,7 +24,7 @@ class BaseSplitter:
 
 
     @abstractmethod
-    def split(self, file_name: str = None, df: pd.DataFrame = None, test_size: float = None):
+    def split(self, file_name: str = None, df: pd.DataFrame = None, test_size: float = None, include_reverse: bool = False):
         if file_name is None:
             raise ValueError("file_name is not given")
         if df is None:

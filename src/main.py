@@ -1,17 +1,24 @@
 # from benchmark.AnalystModel import AnalystModel
 from importlib import import_module
+import json
 from pathlib import Path
 from typing import Iterable, List
 
+
 import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
 
 from splitters import BaseSplitter
-# from models import BaseModel
+from models import BaseModel, ModelConfig
+from benchmark import EvaluateModel
 
 
 DEFAULT_SEEDS = [42, 43, 44, 45, 46]
 DEFAULT_TEST_SIZE = 0.3
 DEFAULT_DATA_DIR = Path("../data/raw")
+DEFAULT_SPLIT_DIR = Path("../data/splitted")
+DEFAULT_RESULTS_DIR = Path("Results")
 
 
 def _load_datasets(data_dir: Path = DEFAULT_DATA_DIR, dataset_names: List[str] = None):
@@ -76,7 +83,10 @@ def _string2class(
             for module in modules:
                 module_obj = module
                 if isinstance(module, str):
-                    module_obj = import_module(f"{conversion_engine}.{module}")
+                    try:
+                        module_obj = import_module(f"{conversion_engine}.{module}")
+                    except ModuleNotFoundError:
+                        continue
 
                 if hasattr(module_obj, input_str):
                     class_ = getattr(module_obj, input_str)
@@ -109,11 +119,12 @@ def main_split(
         print(f"Processing dataset: {dataset_name}")
         for splitter in splitters:
             print(f"  Running splitter: {splitter.__class__.__name__}")
-            splitter.split(file_name=dataset_name, df=df.copy(deep=True), test_size=test_size)
+            splitter.split(file_name = dataset_name, df = df.copy(deep=True), test_size = test_size)
 
 
-# def main_train(models: List[BaseModel]):
-#     pass
+def main_train(models: List[type], dataset_names: List[str] = None):
+    Evaluator = EvaluateModel(models, dataset_names, DEFAULT_SPLIT_DIR, DEFAULT_RESULTS_DIR)
+    Evaluator.evaluate()
 
 
 def main_eval():
@@ -178,20 +189,35 @@ def main(
         print("Partitioning mechanism is not activated")
 
     # Training and Testing
-    # if models is not None:
-    #     main_train(string2class(models, "models"))
-    # else:
-    #     print("No models are provided")
+    if models is not None:
+        model_classes = _string2class(
+            modules = modules,
+            inputs = models,
+            conversion_engine = "models",
+        )
+        main_train(model_classes, dataset_names = dataset_names)
+    else:
+        print("No models are provided")
 
     if require_eval:
         main_eval()
 
 
 if __name__ == "__main__":
-    modules = ["geometric_split", "marginal_distribution_shift", "random_split"]
-    splitters = ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
+    split_modules = ["geometric_split", "marginal_distribution_shift", "random_split"]
+    model_modules = ["statistical_models", "tree_models", "resnet"]
+    modules = split_modules + model_modules
+    splitters = None # ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
+    models = [
+        # "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
+        # "DTRegressor", "RFRegressor", "GBRegressor", "ABRegressor", "XGBRegressor", "LightGBMRegressor",
+        "ResnetRegressor"
+    ]
+    dataset_names = ["bike"]
     main(
         modules,
         splitters,
-        dataset_names = ["bike"],
+        models,
+        require_eval = False,
+        dataset_names = dataset_names
     )

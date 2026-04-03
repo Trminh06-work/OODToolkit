@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-import os
 import pandas as pd
 import numpy as np
 
 import json
-from tqdm.notebook import tqdm
-from pathlib import Path
 import gc
-import copy
-from collections import defaultdict
-from typing import Dict
+from typing import List
+from tqdm.notebook import tqdm
 
-from scipy.stats import friedmanchisquare, wilcoxon, rankdata
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, mean_absolute_percentage_error
 
 from sklearn.preprocessing import StandardScaler
 
-from ..models import BaseModel, ModelConfig
+from models import BaseModel, ModelConfig
 
 import logging
 
@@ -32,40 +27,6 @@ warnings.filterwarnings(
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 logging.getLogger("lightning").setLevel(logging.ERROR)
 
-
-
-class DataSaver:
-    def __init__(self, model_name):
-        self.model_name = model_name
-        self.output_dir = "Results/"
-        os.makedirs(self.output_dir, exist_ok = True)
-
-
-    def _to_python(self, obj):
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        if hasattr(obj, "item"):   # torch / numpy scalar
-            return obj.item()
-        raise TypeError
-
-
-    def save_result(self, out_file, results):
-        # Save path:  Results/{model_name}/{file_name}.json
-        # where in each .json file, it encompasses of results for all types of split
-        try:
-            with open(out_file, "w") as f:
-                json.dump(results, f, indent = 2, default = self._to_python)
-            # tqdm.write(f"Successfully saved → {out_file}")
-        except:
-            tqdm.write(f"Error: Cannot save file")
-
-
-    def read_json(self, file_name):
-        with open(file_name, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return defaultdict(dict, data)
 
 
 class Evaluator:
@@ -129,83 +90,122 @@ class Evaluator:
 
 
 class EvaluateModel:
-    def __init__(self, model_name: str = None, MODEL_REGISTRY: Dict[str, BaseModel] = None):
-        if model_name not in MODEL_REGISTRY:
-            raise ValueError(f"Unknown model: {model_name}")
-        self.model_name = model_name
-        self.model_class = MODEL_REGISTRY[model_name]
-        self.config = ModelConfig
+    def __init__(self,
+        models: List[BaseModel],
+        dataset_names: List[str] = None,
+        source_dir_location = None,
+        result_dir_location = None,
+        config = None
+    ):
+        self.models = models
+        self.dataset_names = dataset_names
+        self.source_dir = source_dir_location
+        self.target_dir = result_dir_location
+        self.config = ModelConfig if config is None else config
 
 
-    def _process(self, df_train, df_test):
-        config = copy.deepcopy(self.config)
+    def evaluate(self):
+        def _sanitize(obj):
+            if isinstance(obj, dict):
+                return {str(k): _sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sanitize(v) for v in obj]
+            if isinstance(obj, tuple):
+                return [_sanitize(v) for v in obj]
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, (np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if hasattr(obj, "item"):
+                return obj.item()
+            raise TypeError
 
-        if self.model_class is ResnetRegressor:
-            regressor = ResnetRegressor(df_train, df_test, config, d_in = df_train.shape[1] - 1)
-        elif self.model_class is FTTransformerRegressor:
-            regressor = FTTransformerRegressor(df_train, df_test, config, d_in = df_train.shape[1] - 1, n_blocks = 3)
-        else:
-            regressor = self.model_class(df_train, df_test, config)
+        for model_class in self.models:
+            model_name = model_class.__name__
+            print(f"Training model: {model_name}")
 
-        regressor.fit()
-        result = regressor.evaluate()
+            model_output_dir = self.target_dir / model_name
+            model_output_dir.mkdir(parents = True, exist_ok = True)
 
-        return result
+            dataset_dirs = sorted(path for path in self.source_dir.iterdir() if path.is_dir())
+            if not dataset_dirs:
+                raise ValueError(f"No split datasets found in {self.source_dir}")
+            if self.dataset_names is not None:
+                dataset_filter = set(self.dataset_names)
+                dataset_dirs = [path for path in dataset_dirs if path.name in dataset_filter]
 
+            for dataset_dir in dataset_dirs:
+                dataset_name = dataset_dir.name
+                results = {}
+                print(f"  Dataset: {dataset_name}")
 
-    def evaluate(self, ds_lst = DATASET_LIST):
-        path = f"../data/splitted"
-        data_saver = DataSaver(self.model_name)
+                for split_dir in sorted(path for path in dataset_dir.iterdir() if path.is_dir()):
+                    split_name = split_dir.name
+                    train_files = sorted(split_dir.glob("train_*.parquet"))
 
-        for file_name in tqdm(ds_lst, desc = "Dataset processing"):
-            results = defaultdict(dict)
-
-            save_dir = os.path.join("Results_add/", self.model_name)
-            os.makedirs(save_dir, exist_ok=True)
-            out_file = os.path.join(save_dir, f"{file_name}.json")
-
-            if os.path.exists(out_file):
-                results = data_saver.read_json(out_file)
-                if len(results) == len(ds_lst):
-                    # tqdm.write("Skip due to file exists")
-                    continue
-
-            for split_type in tqdm(SPLIT_TYPES, desc = f"Processing {file_name} splits", leave = False):
-                folder = Path(os.path.join(path, file_name, split_type))
-                train_files = sorted(folder.glob("train_*.parquet"))
-
-                if split_type in results:
-                    # tqdm.write("Skip due to split type exists")
-                    continue
-
-                for train_file in tqdm(train_files, desc = f"{file_name}/{split_type}", leave = False):
-                    idx = train_file.stem.split("_")[1]
-                    test_file = folder / f"test_{idx}.parquet"
-
-                    if not test_file.exists():
-                        tqdm.write(f"Warning: test file missing for idx={idx}")
+                    if not train_files:
                         continue
 
-                    try:
-                        scaler = StandardScaler()
-                        df_train = pd.read_parquet(train_file)
-                        df_test = pd.read_parquet(test_file)
+                    split_results = {}
+                    # print(f"    Split: {split_name}")
 
-                        df_train = pd.DataFrame(
-                            scaler.fit_transform(df_train),
-                            columns = df_train.columns
-                        )
-                        df_test = pd.DataFrame(
-                            scaler.transform(df_test),
-                            columns = df_test.columns
-                        )
-                    except Exception as e:
-                        tqdm.write(f"Read failed for idx = {idx}: {e}")
-                        continue
+                    for train_file in train_files:
+                        idx = train_file.stem.split("_")[1]
+                        test_file = split_dir / f"test_{idx}.parquet"
+                        if not test_file.exists():
+                            print(f"      Skip run {idx}: missing {test_file.name}")
+                            continue
 
-                    results[split_type][idx] = self._process(df_train, df_test)
+                        try:
+                            df_train = pd.read_parquet(train_file)
+                            df_test = pd.read_parquet(test_file)
 
-                    del df_train, df_test
-                    gc.collect()
+                            X_train = df_train.iloc[:, :-1]
+                            y_train = df_train.iloc[:, -1]
+                            X_test = df_test.iloc[:, :-1]
+                            y_test = df_test.iloc[:, -1]
 
-                data_saver.save_result(out_file, results)
+                            scaler = StandardScaler()
+                            X_train_scaled = pd.DataFrame(
+                                scaler.fit_transform(X_train),
+                                columns = X_train.columns,
+                            )
+                            X_test_scaled = pd.DataFrame(
+                                scaler.transform(X_test),
+                                columns = X_test.columns,
+                            )
+
+                            scaled_train = pd.concat(
+                                [ X_train_scaled.reset_index(drop = True), y_train.reset_index(drop = True) ],
+                                axis = 1
+                            )
+                            scaled_test = pd.concat(
+                                [ X_test_scaled.reset_index(drop = True), y_test.reset_index(drop = True) ],
+                                axis = 1
+                            )
+
+                            model = model_class(
+                                scaled_train,
+                                scaled_test,
+                                config = self.config,
+                            )
+                            model.fit()
+                            split_results[idx] = model.evaluate()
+                        except Exception as e:
+                            print(f"Unsuccessful evaluation due to '{e}'. Specifically, at model: {model_name}, dataset: {dataset_name}, split type: {split_name}")
+                            exit(0)
+
+                    if split_results:
+                        results[split_name] = split_results
+
+                output_file = model_output_dir / f"{dataset_name}.json"
+                with output_file.open("w", encoding = "utf-8") as f:
+                    json.dump(results, f, indent = 2, default = _sanitize)
+
+                # Cleaning
+                del df_train, df_test
+                gc.collect()
