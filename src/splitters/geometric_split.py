@@ -3,14 +3,26 @@ from .base_splitter import BaseSplitter
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
+from typing import List
 
 
 class BasicGeometricSplit(BaseSplitter):
-    def __init__(self, seeds = None, keep_size = False):
+    def __init__(self, seeds: List[int] = None, keep_size: bool = False, num_balls: int = 3):
         """
-            keep_size: (default: False) -> set to True to keep the big-sized data, >1M samples
+        This class involves several convex-based splitting and its reversed splitting:
+            1. Single Hyperball
+            2. Multiple Hyperballs
+            3. Single Slab
+            4. Semi-infinite Slab
+            5. KMeans Hyperballs
+
+        Parameters:
+            seeds: List[int], None as default. For reproducibility
+            keep_size: bool False as default. Set to True to keep the big-sized data, >1M samples
+            num_balls: int, 3 as default. Specify number of hyperballs/KMeans clusters
         """
         super().__init__(seeds, keep_size)
+        self.num_balls = num_balls
 
 
     """
@@ -237,7 +249,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test.to_parquet(path, index = False)
 
 
-    def _multiple_hyperballs(self, num_balls):
+    def _multiple_hyperballs(self):
         """
             Select the test points based on several random Hyperballs and predefined TEST_SIZE
 
@@ -258,7 +270,7 @@ class BasicGeometricSplit(BaseSplitter):
             inclusive_data = set()
 
             np.random.seed(SEED)
-            sub_train_sizes = self._random_sums(self.train_size, num_balls)
+            sub_train_sizes = self._random_sums(self.train_size, self.num_balls)
 
             for sub_train_size in sub_train_sizes:
                 np.random.seed(SEED)
@@ -511,7 +523,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test.to_parquet(path, index = False)
 
 
-    def _kmeans_hyperballs(self, n_clusters):
+    def _kmeans_hyperballs(self):
         """
             Select the test points based on several Hyperballs, whose centers are determined by KMeans Clustering technique and predefined TRAIN_SIZE
 
@@ -524,14 +536,14 @@ class BasicGeometricSplit(BaseSplitter):
             os.makedirs(output_dir)
 
         for idx, SEED in enumerate(self.SEEDS):
-            kmeans = KMeans(n_clusters = n_clusters, random_state = SEED)
+            kmeans = KMeans(n_clusters = self.num_balls, random_state = SEED, n_init = 10)
             kmeans.fit(self.X)
 
             # centroids = kmeans.cluster_centers_
             labels = kmeans.labels_
 
             total = self.X.shape[0]
-            clusters = [i for i in range(n_clusters)]
+            clusters = [i for i in range(self.num_balls)]
 
             inclusive_data = set()
 
@@ -565,12 +577,9 @@ class BasicGeometricSplit(BaseSplitter):
             df_test.to_parquet(path, index = False)
 
 
-    def _reverse_kmeans_hyperballs(self, n_clusters):
+    def _reverse_kmeans_hyperballs(self):
         """
             Select the test points based on several Hyperballs, whose centers are determined by KMeans Clustering technique and predefined TEST_SIZE
-
-            Parameters:
-                n_clusters:  the number of expected Hyperballs
         """
         # Create directory if not exist
         output_dir = f"../data/splitted/{self.file_name}/KMeans_Hyperballs"
@@ -578,14 +587,14 @@ class BasicGeometricSplit(BaseSplitter):
             os.makedirs(output_dir)
 
         for idx, SEED in enumerate(self.SEEDS):
-            kmeans = KMeans(n_clusters = n_clusters, random_state = SEED)
+            kmeans = KMeans(n_clusters = self.num_balls, random_state = SEED)
             kmeans.fit(self.X)
 
             # centroids = kmeans.cluster_centers_
             labels = kmeans.labels_
 
             total = self.X.shape[0]
-            clusters = [i for i in range(n_clusters)]
+            clusters = [i for i in range(self.num_balls)]
 
             inclusive_data = set()
 

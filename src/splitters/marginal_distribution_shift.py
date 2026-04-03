@@ -82,4 +82,3 @@ class MarginalDistributionSplit(BaseSplitter):
         super().split(file_name, df, test_size)
 
         self._covariate_shift()
-

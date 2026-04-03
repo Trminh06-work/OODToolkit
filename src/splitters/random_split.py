@@ -9,10 +9,16 @@ class RandomSplit(BaseSplitter):
         super().__init__(seeds, keep_size)
 
 
-    def _random_split(self, SEEDS):
+    def _random_split(self, SEEDS = None):
         """
+        The primary implementation of ID data partitioning
+
+        Parameters
+            seeds: List[int], None as default
             keep_size: (default: False) -> set to True to keep the big-sized data, >1M samples
         """
+        SEEDS = self.SEEDS if SEEDS is None else SEEDS
+
         # Create directory if not exist
         output_dir = f"../data/splitted/{self.file_name}/Random_Split"
         if not os.path.exists(output_dir):

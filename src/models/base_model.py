@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import torch
 import pandas as pd
-from ..benchmark import Evaluator
+from benchmark import Evaluator
 
 from typing import Dict
 @dataclass

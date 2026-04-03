@@ -33,6 +33,8 @@ class BaseSplitter:
             raise ValueError("test_size is not specified or incorrectly given")
         self.file_name = file_name
         self.df = df
+        self.X = df.iloc[:, :-1]
+        self.y = df.iloc[:, -1]
         self.test_size = test_size
 
         self._preprocess()
