@@ -60,3 +60,4 @@ slides.bbl-SAVE-ERROR
 # Ignore unimportant files in models/ folders
 lightning_logs/
 optuna.db
+.vscode
