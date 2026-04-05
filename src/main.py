@@ -1,4 +1,3 @@
-# from benchmark.AnalystModel import AnalystModel
 from importlib import import_module
 import json
 from pathlib import Path
@@ -11,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 from splitters import BaseSplitter
 from models import BaseModel, ModelConfig
-from benchmark import EvaluateModel
+from benchmark import AnalystModel, EvaluateModel
 
 
 DEFAULT_SEEDS = [42, 43, 44, 45, 46]
@@ -19,6 +18,7 @@ DEFAULT_TEST_SIZE = 0.3
 DEFAULT_DATA_DIR = Path("../data/raw")
 DEFAULT_SPLIT_DIR = Path("../data/splitted")
 DEFAULT_RESULTS_DIR = Path("Results")
+DEFAULT_CONFIG_DIR = Path("config")
 
 
 def _load_datasets(data_dir: Path = DEFAULT_DATA_DIR, dataset_names: List[str] = None):
@@ -122,13 +122,35 @@ def main_split(
             splitter.split(file_name = dataset_name, df = df.copy(deep=True), test_size = test_size)
 
 
-def main_train(models: List[type], dataset_names: List[str] = None):
-    Evaluator = EvaluateModel(models, dataset_names, DEFAULT_SPLIT_DIR, DEFAULT_RESULTS_DIR)
+def main_train(
+    models: List[type],
+    dataset_names: List[str] = None,
+    config_dir: Path = DEFAULT_CONFIG_DIR,
+):
+    Evaluator = EvaluateModel(
+        models,
+        dataset_names,
+        DEFAULT_SPLIT_DIR,
+        DEFAULT_RESULTS_DIR,
+        config_dir_location = config_dir,
+    )
     Evaluator.evaluate()
 
 
-def main_eval():
-    pass
+def main_eval(
+    splitwise_baseline_only: bool = True,
+    splitwise_include_variants: bool = False,
+):
+    Analyst = AnalystModel(results_root = DEFAULT_RESULTS_DIR, split_data_root = DEFAULT_SPLIT_DIR)
+
+    print("Running split-agnostic evaluation on baseline models")
+    Analyst.split_agnostic_test()
+
+    print("Running split-wise evaluation")
+    Analyst.split_wise_test(
+        baseline_only = splitwise_baseline_only,
+        include_variants = splitwise_include_variants,
+    )
 
 
 
@@ -138,11 +160,14 @@ def main(
     splitters: List[str] = None,
     models: List[str] = None,
     require_eval: bool = False,
+    splitwise_baseline_only: bool = True,
+    splitwise_include_variants: bool = False,
     dataset_names: List[str] = None,
     seeds: List[int] = None,
     test_size: float = DEFAULT_TEST_SIZE,
     keep_size: bool = False,
     data_dir: Path = DEFAULT_DATA_DIR,
+    config_dir: Path = DEFAULT_CONFIG_DIR,
 ):
     """
     This main() procedure presents the primary pipeline of this OOD Toolkit:
@@ -157,7 +182,10 @@ def main(
         dataset_names: List[str], None as default. The list of benchmark dataset names
         seeds: List[int], None as default. The list of seeds for reproducibility
         keep_size: bool False as default. Set to True to keep the big-sized data, >1M samples
-        data_dir: str, "../data/raw" as default. Location of folder saving benchmark datasets
+        data_dir: Path, "../data/raw" as default. Location of folder saving benchmark datasets
+        config_dir: Path, "config/" as default. Location of folder saving runtime and models' hyperparameters configurations
+        splitwise_baseline_only: bool, True as default. Compare only baseline models in split-wise statistical tests
+        splitwise_include_variants: bool, False as default. Include model variants as separate competitors in split-wise tests
     """
 
     if modules is not None:
@@ -195,12 +223,15 @@ def main(
             inputs = models,
             conversion_engine = "models",
         )
-        main_train(model_classes, dataset_names = dataset_names)
+        main_train(model_classes, dataset_names = dataset_names, config_dir = config_dir)
     else:
         print("No models are provided")
 
     if require_eval:
-        main_eval()
+        main_eval(
+            splitwise_baseline_only = splitwise_baseline_only,
+            splitwise_include_variants = splitwise_include_variants,
+        )
 
 
 if __name__ == "__main__":
@@ -211,13 +242,15 @@ if __name__ == "__main__":
     models = [
         # "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
         # "DTRegressor", "RFRegressor", "GBRegressor", "ABRegressor", "XGBRegressor", "LightGBMRegressor",
-        "ResnetRegressor"
+        # "ResnetRegressor"
     ]
     dataset_names = ["bike"]
     main(
         modules,
         splitters,
         models,
-        require_eval = False,
+        require_eval = True,
+        splitwise_baseline_only = False,
+        splitwise_include_variants = False,
         dataset_names = dataset_names
     )

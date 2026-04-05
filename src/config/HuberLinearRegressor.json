@@ -1,0 +1,28 @@
+{
+  "variants": {
+    "baseline": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "epsilon": 1.35,
+        "alpha": 0.0001,
+        "max_iter": 5000,
+        "tol": 0.0001,
+        "l1_ratio": 0.2
+      }
+    },
+    "robust_regularized": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "epsilon": 1.2,
+        "alpha": 0.001,
+        "max_iter": 8000,
+        "tol": 0.0001,
+        "l1_ratio": 0.35
+      }
+    }
+  }
+}

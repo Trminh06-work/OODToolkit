@@ -1,0 +1,14 @@
+{
+  "name": "baseline",
+  "runtime_config": {
+    "seed": 42
+  },
+  "model_params": {
+    "degree": 2,
+    "epsilon": 1.35,
+    "alpha": 0.0005,
+    "max_iter": 5000,
+    "tol": 0.0001,
+    "l1_ratio": 0.25
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "variants": {
+    "baseline": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "weights": "distance",
+        "n_neighbors": 5
+      }
+    },
+    "smooth_neighbors": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "weights": "uniform",
+        "n_neighbors": 11
+      }
+    }
+  }
+}

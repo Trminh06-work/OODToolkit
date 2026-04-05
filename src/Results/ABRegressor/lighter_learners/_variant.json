@@ -1,0 +1,14 @@
+{
+  "name": "lighter_learners",
+  "runtime_config": {
+    "seed": 42
+  },
+  "model_params": {
+    "max_depth": 6,
+    "min_samples_leaf": 10,
+    "min_samples_split": 20,
+    "max_features": null,
+    "n_estimators": 800,
+    "learning_rate": 0.03
+  }
+}

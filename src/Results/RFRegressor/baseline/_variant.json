@@ -1,0 +1,15 @@
+{
+  "name": "baseline",
+  "runtime_config": {
+    "seed": 42
+  },
+  "model_params": {
+    "n_estimators": 400,
+    "max_samples": null,
+    "n_jobs": -1,
+    "max_depth": 12,
+    "min_samples_leaf": 20,
+    "min_samples_split": 40,
+    "max_features": "sqrt"
+  }
+}

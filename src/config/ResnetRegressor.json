@@ -1,0 +1,22 @@
+{
+  "variants": {
+    "baseline": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "d": 512,
+        "n_res_blocks": 4,
+        "d_out": 1,
+        "d_hidden_factor": 0.2,
+        "dropout_rate": 0.2,
+        "act_fn": "relu",
+        "norm": "batchnorm1d",
+        "lr": 0.001,
+        "weight_decay": 0.0001,
+        "epochs": 100,
+        "batch_size": 1024
+      }
+    }
+  }
+}

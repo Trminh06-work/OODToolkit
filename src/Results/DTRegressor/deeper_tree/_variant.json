@@ -1,0 +1,12 @@
+{
+  "name": "deeper_tree",
+  "runtime_config": {
+    "seed": 42
+  },
+  "model_params": {
+    "max_depth": 20,
+    "min_samples_leaf": 10,
+    "min_samples_split": 20,
+    "max_features": null
+  }
+}
