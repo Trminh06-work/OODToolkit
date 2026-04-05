@@ -1,17 +1,23 @@
-#!/usr/bin/env bash
-#SBATCH --job-name=oodtoolkit
-#SBATCH --output=slurm-%j.out
-#SBATCH --error=slurm-%j.err
-#SBATCH --time=24:00:00
+#!/bin/bash
+
+#SBATCH --job-name=OODToolkit
+#SBATCH --array=0-0
+#SBATCH --ntasks=1
+#SBATCH --nodes=1
 #SBATCH --cpus-per-task=4
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --time=24:00:00
 #SBATCH --mem=16G
+#SBATCH -o logs/%x_%A_%a.out
+#SBATCH -e logs/%x_%A_%a.err
 
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
 Usage:
-  sbatch script/run_ood_slurm.sh [options]
+  sbatch script/bash.sh [options]
 
 Options:
   --modules LIST                       Comma-separated module names from src/splitters and src/models
@@ -25,7 +31,7 @@ Options:
   --help                               Show this message
 
 Examples:
-  sbatch script/run_ood_slurm.sh \
+  sbatch script/bash.sh \
     --modules geometric_split,random_split,tree_models,statistical_models \
     --splitters RandomSplit \
     --models RFRegressor,LightGBMRegressor \
@@ -34,7 +40,7 @@ Examples:
     --splitwise-include-variants true \
     --dataset-names bike
 
-  sbatch --export=ALL,PYTHON_BIN=python3.11 script/run_ood_slurm.sh \
+  sbatch --export=ALL,PYTHON_BIN=python3.11,CONDA_ENV_NAME=jupyter_env script/bash.sh \
     --modules geometric_split,marginal_distribution_shift,random_split,statistical_models,tree_models,resnet \
     --models HuberLinearRegressor,RFRegressor \
     --require-eval false \
@@ -64,6 +70,7 @@ normalize_bool() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-jupyter_env}"
 
 MODULES=""
 SPLITTERS=""
@@ -124,6 +131,24 @@ REQUIRE_EVAL="$(normalize_bool "$REQUIRE_EVAL" "False")"
 SPLITWISE_BASELINE_ONLY="$(normalize_bool "$SPLITWISE_BASELINE_ONLY" "True")"
 SPLITWISE_INCLUDE_VARIANTS="$(normalize_bool "$SPLITWISE_INCLUDE_VARIANTS" "False")"
 
+T1=$(date +%s)
+
+cd "${REPO_ROOT}"
+mkdir -p logs results
+
+if type module >/dev/null 2>&1; then
+    module purge
+fi
+
+if [[ -f "${HOME}/.bashrc" ]]; then
+    # Load shell init so `conda activate` works in batch jobs.
+    source "${HOME}/.bashrc"
+fi
+
+if command -v conda >/dev/null 2>&1; then
+    conda activate "${CONDA_ENV_NAME}"
+fi
+
 export MODULES
 export SPLITTERS
 export MODELS
@@ -142,6 +167,24 @@ export XDG_CACHE_HOME="${JOB_CACHE_DIR}/cache"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+ENV_INFO="logs/env_info_${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-nojob}}_${SLURM_ARRAY_TASK_ID:-0}.txt"
+
+{
+    echo "Task run at $(date)"
+    echo "Host: $(hostname -s)"
+    echo "PWD: $(pwd)"
+    echo "SLURM_JOB_ID=${SLURM_JOB_ID:-}"
+    echo "SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID:-}"
+    echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-}"
+    echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
+    echo "Python executable:"
+    command -v "${PYTHON_BIN}" || true
+    echo "Conda environment: ${CONDA_ENV_NAME}"
+    if type module >/dev/null 2>&1; then
+        module list
+    fi
+} > "${ENV_INFO}" 2>&1
 
 cd "${REPO_ROOT}/src"
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
@@ -179,3 +222,6 @@ main(
     dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
 )
 PY
+
+T2=$(date +%s)
+echo "Elapsed: $((T2 - T1)) seconds" >> "${REPO_ROOT}/${ENV_INFO}"
