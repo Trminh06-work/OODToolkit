@@ -186,6 +186,11 @@ def main(
         config_dir: Path, "config/" as default. Location of folder saving runtime and models' hyperparameters configurations
         splitwise_baseline_only: bool, True as default. Compare only baseline models in split-wise statistical tests
         splitwise_include_variants: bool, False as default. Include model variants as separate competitors in split-wise tests
+    Note:
+        The split-agnostic table only uses the baseline configuration. In contrast, the split-wise tables are more flexible.
+            To construct a full split-wise table including all model variants set splitwise_baseline_only = False and splitwise_include_variants = True.
+
+            To construct a split-wise table only including baseline models, set splitwise_baseline_only = True, the same table will be presented for whatever the splitwise_include_variants is set, as splitwise_baseline_only is prioritised over splitwise_include_variants.
     """
 
     if modules is not None:
