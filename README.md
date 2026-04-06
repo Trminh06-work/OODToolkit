@@ -1,4 +1,4 @@
-# OODToolkit
+# OODToolkit: An end-to-end OOD Tabular Regression Assessment Pipeline
 
 OODToolkit is a small research toolkit for benchmarking regression models under out-of-distribution (OOD) train/test splits. It lets you:
 
@@ -190,12 +190,6 @@ This runs the full pipeline for the `bike` dataset.
 The repo includes a Slurm wrapper at [`script/bash.sh`](script/bash.sh) and a default config at [`script/job.conf`](script/job.conf).
 
 Typical usage:
-
-```bash
-sbatch script/bash.sh
-```
-
-Or with an explicit config:
 
 ```bash
 sbatch script/bash.sh --config script/job.conf
