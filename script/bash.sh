@@ -30,6 +30,7 @@ Config file variables:
   REQUIRE_EVAL="true"
   SPLITWISE_BASELINE_ONLY="false"
   SPLITWISE_INCLUDE_VARIANTS="true"
+  MODELWISE_EVAL="false"
   DATASET_NAMES="bike"
   PYTHON_BIN="python"
   CONDA_ENV_NAME="jupyter_env"
@@ -86,6 +87,8 @@ SPLITWISE_BASELINE_ONLY=""
 # Store the split-wise baseline-only flag before normalization.
 SPLITWISE_INCLUDE_VARIANTS=""
 # Store the split-wise include-variants flag before normalization.
+MODELWISE_EVAL=""
+# Store the model-wise evaluation flag before normalization.
 DATASET_NAMES=""
 # Store the comma-separated dataset list loaded from the config file.
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -135,6 +138,8 @@ SPLITWISE_BASELINE_ONLY="${SPLITWISE_BASELINE_ONLY:-}"
 # Read the configured baseline-only flag before normalization.
 SPLITWISE_INCLUDE_VARIANTS="${SPLITWISE_INCLUDE_VARIANTS:-}"
 # Read the configured include-variants flag before normalization.
+MODELWISE_EVAL="${MODELWISE_EVAL:-}"
+# Read the configured model-wise evaluation flag before normalization.
 DATASET_NAMES="${DATASET_NAMES:-}"
 # Read the configured dataset list, or leave empty if omitted.
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -148,6 +153,8 @@ SPLITWISE_BASELINE_ONLY="$(normalize_bool "$SPLITWISE_BASELINE_ONLY" "True")"
 # Default to baseline-only split-wise comparison.
 SPLITWISE_INCLUDE_VARIANTS="$(normalize_bool "$SPLITWISE_INCLUDE_VARIANTS" "False")"
 # Default to excluding variants from split-wise comparison.
+MODELWISE_EVAL="$(normalize_bool "$MODELWISE_EVAL" "False")"
+# Default to skipping model-wise comparison unless explicitly enabled.
 
 echo "REPO_ROOT=${REPO_ROOT}"
 # Print the resolved repository root to the Slurm output stream for debugging.
@@ -197,6 +204,8 @@ export SPLITWISE_BASELINE_ONLY
 # Make the normalized baseline-only flag available to Python.
 export SPLITWISE_INCLUDE_VARIANTS
 # Make the normalized include-variants flag available to Python.
+export MODELWISE_EVAL
+# Make the normalized model-wise evaluation flag available to Python.
 export DATASET_NAMES
 # Make the dataset list available to Python.
 export REPO_ROOT
@@ -277,6 +286,8 @@ printf 'Splitwise baseline only: %s\n' "${SPLITWISE_BASELINE_ONLY}"
 # Echo the split-wise baseline-only flag.
 printf 'Splitwise include variants: %s\n' "${SPLITWISE_INCLUDE_VARIANTS}"
 # Echo the split-wise include-variants flag.
+printf 'Modelwise eval: %s\n' "${MODELWISE_EVAL}"
+# Echo the model-wise evaluation flag.
 printf 'Dataset names: %s\n' "${DATASET_NAMES:-<all>}"
 # Echo the selected dataset names or show a placeholder if all datasets are used.
 
@@ -313,6 +324,8 @@ main(
     # Convert the baseline-only flag back to a Python boolean.
     splitwise_include_variants=os.environ["SPLITWISE_INCLUDE_VARIANTS"] == "True",
     # Convert the include-variants flag back to a Python boolean.
+    modelwise_eval=os.environ["MODELWISE_EVAL"] == "True",
+    # Convert the model-wise evaluation flag back to a Python boolean.
     dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
     # Restrict execution to the requested dataset names, if any.
 )

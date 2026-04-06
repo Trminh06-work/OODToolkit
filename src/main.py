@@ -140,6 +140,7 @@ def main_train(
 def main_eval(
     splitwise_baseline_only: bool = True,
     splitwise_include_variants: bool = False,
+    modelwise_eval: bool = False,
 ):
     Analyst = AnalystModel(results_root = DEFAULT_RESULTS_DIR, split_data_root = DEFAULT_SPLIT_DIR)
 
@@ -152,6 +153,13 @@ def main_eval(
         include_variants = splitwise_include_variants,
     )
 
+    if modelwise_eval:
+        print("Running model-wise evaluation")
+        Analyst.model_wise_test(
+            baseline_only = splitwise_baseline_only,
+            include_variants = splitwise_include_variants,
+        )
+
 
 
 
@@ -162,6 +170,7 @@ def main(
     require_eval: bool = False,
     splitwise_baseline_only: bool = True,
     splitwise_include_variants: bool = False,
+    modelwise_eval: bool = False,
     dataset_names: List[str] = None,
     seeds: List[int] = None,
     test_size: float = DEFAULT_TEST_SIZE,
@@ -186,6 +195,7 @@ def main(
         config_dir: Path, "config/" as default. Location of folder saving runtime and models' hyperparameters configurations
         splitwise_baseline_only: bool, True as default. Compare only baseline models in split-wise statistical tests
         splitwise_include_variants: bool, False as default. Include model variants as separate competitors in split-wise tests
+        modelwise_eval: bool, False as default. Run model-wise statistical tests that compare split types for each model
     Note:
         The split-agnostic table only uses the baseline configuration. In contrast, the split-wise tables are more flexible.
             To construct a full split-wise table including all model variants set splitwise_baseline_only = False and splitwise_include_variants = True.
@@ -236,6 +246,7 @@ def main(
         main_eval(
             splitwise_baseline_only = splitwise_baseline_only,
             splitwise_include_variants = splitwise_include_variants,
+            modelwise_eval = modelwise_eval,
         )
 
 
@@ -257,5 +268,6 @@ if __name__ == "__main__":
         require_eval = True,
         splitwise_baseline_only = False,
         splitwise_include_variants = False,
+        modelwise_eval = True,
         dataset_names = dataset_names
     )

@@ -288,6 +288,7 @@ class AnalystModel:
             latex_rows.append(" & ".join(row_cells) + " \\\\")
         print("\n\n".join(latex_rows))
 
+
     def side_exp_performance_table(
         self,
         model_name,
@@ -456,6 +457,29 @@ class AnalystModel:
         return wide
 
 
+    def construct_model_wise_table(self, long_df: pd.DataFrame, model_label: str):
+        """
+        This framework evaluates a single model across splitting strategies.
+
+        The returned table uses datasets as paired comparison blocks and splits
+        as columns, so downstream statistical tests can compare split types for
+        one fixed model.
+        """
+        available_models = sorted(long_df["model"].unique())
+        if model_label not in available_models:
+            raise ValueError(f"{model_label} does not exist. The values must be {available_models}")
+
+        sub = long_df[long_df["model"] == model_label]
+        wide = sub.pivot_table(index = "dataset", columns = "split", values = "score", aggfunc = "first")
+
+        # keep only datasets where ALL splits exist for this model (paired comparisons)
+        wide = wide.dropna(axis = 0, how = "any")
+
+        if wide.empty:
+            raise ValueError(f"No complete datasets for model={model_label} across all splits.")
+        return wide
+
+
     def holm_adjust(self, pvals):
         """
         Holm-Bonferroni adjusted p-values (step-down), returns adjusted p-values.
@@ -587,6 +611,24 @@ class AnalystModel:
             print()  # blank line between models
 
 
+    def print_modelwise_meanrank_latex(self, latex_buffer: dict, model_labels) -> None:
+        """
+        latex_buffer: {split_type: {model_label: (rank, tag)}}
+        Prints rows like: Split & 2.10 & ... \\
+        """
+        for split_type in sorted(latex_buffer.keys()):
+            split_name = str(split_type).replace("_", r"\_")
+            row = [split_name]
+            for model_label in model_labels:
+                if model_label not in latex_buffer[split_type]:
+                    row.append("--")
+                    continue
+                rank, tag = latex_buffer[split_type][model_label]
+                row.append(self._fmt_rank_latex(float(rank), tag))
+            print(" & ".join(row) + r" \\")
+            print()
+
+
     def split_wise_test(
         self,
         long_df: pd.DataFrame = None,
@@ -677,3 +719,92 @@ class AnalystModel:
         print("\n" + "#" * 90)
         print("LATEX ROWS (mean ranks per split; red=best, blue=tied-with-best)\n")
         self.print_splitwise_meanrank_latex(latex_buffer, split_types)
+
+
+    def model_wise_test(
+        self,
+        long_df: pd.DataFrame = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+    ):
+        if long_df is None:
+            long_df = self.construct_full_stats_table(
+                metric = "RMSE",
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+            )
+
+        summary_rows = []
+
+        # buffer to build LaTeX rows at the end
+        latex_buffer = {}  # {split_type: {model_label: (mean_rank, tag)}}
+
+        model_labels = sorted(long_df["model"].unique())
+
+        for model_label in model_labels:
+            print("\n" + "=" * 90)
+            print(f"MODEL: {model_label}")
+
+            # Step 3: wide matrix for this model
+            wide = self.construct_model_wise_table(long_df, model_label)
+            print(f"Datasets (paired blocks): {wide.shape[0]} | Splits: {wide.shape[1]}")
+
+            # Step 4: Friedman
+            chi2, p_friedman = self.friedman_on_wide(wide)
+            print(f"Friedman chi2={chi2:.4f}, p={p_friedman:.6g}")
+
+            # Step 5: mean ranks
+            mr = self.compute_mean_ranks(wide)
+            best = mr.index[0]
+            print("\nMean ranks (lower is better):")
+            print(mr)
+            print("\nCandidate best split:", best)
+
+            highlight = {split_type: "normal" for split_type in mr.index}
+            highlight[best] = "best"
+
+            # Step 6: post-hoc
+            if p_friedman < self.alpha and wide.shape[1] > 1:
+                post = self.posthoc_vs_best(wide, best)
+                print("\nPost-hoc (Holm-corrected Wilcoxon vs best):")
+                print(post.to_string(index=False))
+
+                top_group = [best] + post.loc[post["p_holm"] >= self.alpha, "compare_to"].tolist()
+
+                for split_type in top_group:
+                    highlight[split_type] = "tie"
+                highlight[best] = "best"
+
+                if len(top_group) == 1:
+                    conclusion = f"BEST: {best}"
+                    print(f"\n✅ Best split for model '{model_label}': {best}")
+                else:
+                    conclusion = f"TOP_GROUP: {top_group}"
+                    print(f"\n⚠️ No single winner for model '{model_label}'. Top group: {top_group}")
+            else:
+                post = None
+                conclusion = "NO_SIG_DIFF"
+                print(f"\n⚠️ No significant overall difference across splits for model '{model_label}' (or only 1 split).")
+
+            # store mean ranks + highlight tags for LaTeX export
+            for split_type, rank in mr.items():
+                latex_buffer.setdefault(split_type, {})
+                latex_buffer[split_type][model_label] = (float(rank), highlight[split_type])
+
+            summary_rows.append({
+                "model": model_label,
+                "datasets_used": wide.shape[0],
+                "splits": wide.shape[1],
+                "friedman_p": p_friedman,
+                "best_candidate": best,
+                "conclusion": conclusion
+            })
+
+        summary = pd.DataFrame(summary_rows).sort_values("model")
+        print("\n" + "#" * 90)
+        print("MODEL-WISE SUMMARY")
+        print(summary.to_string(index=False))
+
+        print("\n" + "#" * 90)
+        print("LATEX ROWS (mean ranks per model; red=best, blue=tied-with-best)\n")
+        self.print_modelwise_meanrank_latex(latex_buffer, model_labels)

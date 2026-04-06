@@ -148,6 +148,7 @@ main(
     models=["RFRegressor"],
     require_eval=True,
     splitwise_baseline_only=True,
+    modelwise_eval=False,
     dataset_names=["bike"],
 )
 ```
@@ -179,6 +180,7 @@ main(
     splitters=["RandomSplit", "BasicGeometricSplit", "MarginalDistributionSplit"],
     models=["RFRegressor"],
     require_eval=True,
+    modelwise_eval=False,
     dataset_names=["bike"],
 )
 ```
@@ -201,6 +203,7 @@ Key config fields:
 - `SPLITTERS`: splitter class names to run
 - `MODELS`: model class names to train
 - `REQUIRE_EVAL`: whether to run the evaluation stage
+- `MODELWISE_EVAL`: whether to run model-wise tests across split types for each model
 - `DATASET_NAMES`: comma-separated dataset names such as `bike`
 
 ## Understanding Outputs
