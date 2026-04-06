@@ -252,6 +252,76 @@ Structure:
 
 `runtime_config` maps to `ModelConfig`, and `model_params` are passed directly to the model constructor.
 
+## Adding Your Own Models And Splitters
+
+You can extend the toolkit by adding your own model and splitter implementations.
+
+### Add A New Model
+
+Place the implementation in [`src/models/`](src/models).
+
+Requirements:
+
+- tabular models should inherit from `BaseModel`
+- deep learning models should inherit from `BaseDLModel`
+- the class must implement the expected training/prediction interface used by the toolkit
+- the model class name is what you pass in `models=[...]`
+
+In practice this means:
+
+- accept `df_train`, `df_test`, and `config` in the constructor
+- call the parent constructor
+- implement `fit()`
+- implement `predict()`
+
+If you want the model to support named hyperparameter variants, add a matching JSON file in [`src/config/`](src/config). The filename must match the class name, for example:
+
+```text
+src/models/my_models.py
+src/config/MyCustomRegressor.json
+```
+
+To make the model discoverable, include its module name in `modules=[...]` and its class name in `models=[...]`.
+
+Example:
+
+```python
+main(
+    modules=["tree_models", "my_models"],
+    models=["RFRegressor", "MyCustomRegressor"],
+)
+```
+
+### Add A New Splitter
+
+Place the implementation in [`src/splitters/`](src/splitters).
+
+Requirements:
+
+- inherit from `BaseSplitter`
+- implement `split(...)` in the same style as the existing splitters
+- save outputs under `data/splitted/<dataset_name>/<split_name>/`
+- write paired `train_<i>.parquet` and `test_<i>.parquet` files
+
+The splitter must follow the repository convention that:
+
+- features come from all columns except the last one
+- the last column is the target
+- each saved train/test file contains both features and target
+
+To use the splitter, include its module name in `modules=[...]` and its class name in `splitters=[...]`.
+
+Example:
+
+```python
+main(
+    modules=["random_split", "my_splitters"],
+    splitters=["RandomSplit", "MyCustomSplit"],
+)
+```
+
+If you want your custom classes to be importable from package-level imports, also update [`src/models/__init__.py`](src/models/__init__.py) or [`src/splitters/__init__.py`](src/splitters/__init__.py), although the dynamic module loading in `main.py` primarily depends on the module names you pass in `modules=[...]`.
+
 ## Notes For First-Time Use
 
 - Run from `src/` unless you explicitly override the default paths in `main.py`.
