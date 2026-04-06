@@ -255,6 +255,7 @@ Structure:
 - Start with `dataset_names=["bike"]` to keep the first run small.
 - If you only want to test training, leave `splitters=None` and reuse `data/splitted/bike/`.
 - Large datasets may be downsampled by splitters unless `keep_size=True`.
+- For those conducting experiments via Slurm, the final results are available in the OODToolkit/logs/ folder
 
 ## Where To Look Next
 
