@@ -345,7 +345,7 @@ GitHub: [@Trminh06-work](https://github.com/Trminh06-work)
 LinkedIn: [Bao Minh Tran](www.linkedin.com/in/bao-minh-tran-587272372)
 
 Email:
-- [Deakin's student mail](s224236373@deakin.edu.au). May be expired after 2027.
-- [General mail](trminh06.work@gmail.com)
+- Deakin's student mail: s224236373@deakin.edu.au (May be expired after 2027)
+- General mail: trminh06.work@gmail.com
 
 Feel free to open an issue if you have questions, suggestions, or find a bug.
