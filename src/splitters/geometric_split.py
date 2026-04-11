@@ -455,7 +455,7 @@ class BasicGeometricSplit(BaseSplitter):
                 X_train = self._data_one_side(normal_vec, b)
 
                 cur_proportion = self._compute_proportion(X_train)
-                if cur_proportion < self.test_size:
+                if cur_proportion < self.train_size:
                   lo = point + epsilon
                 else:
                   high = point - epsilon
