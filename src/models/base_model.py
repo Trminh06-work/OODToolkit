@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict
+import random
 
 import pandas as pd
 import numpy as np
@@ -29,6 +30,17 @@ def pick_device(prefer_mps: bool = True, prefer_cuda: bool = True) -> str:
     if prefer_mps and getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def set_random_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if getattr(torch.backends, "cudnn", None) is not None:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def normalization(norm: str, dim: int):
@@ -84,12 +96,16 @@ class CreateDataLoader:
         is_shuffle = True,
         seed: int = 42,
     ):
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train, y_train,
-            test_size = val_size,
-            shuffle = is_shuffle,
-            random_state = seed,
-        )
+        try:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_train, y_train,
+                test_size = val_size,
+                shuffle = is_shuffle,
+                random_state = seed,
+            )
+        except ValueError:
+            X_val = self._empty_like(X_train)
+            y_val = self._empty_like(y_train)
 
         # Save
         self.X_train = self._to_tensor(X_train)
@@ -103,6 +119,13 @@ class CreateDataLoader:
 
         self.batch_size = batch_size
         self.is_shuffle = is_shuffle
+
+
+    def _empty_like(self, x):
+        if isinstance(x, (pd.DataFrame, pd.Series)):
+            return x.iloc[0:0]
+        x = np.asarray(x)
+        return x[:0]
 
 
     def _to_tensor(self, X):
@@ -131,12 +154,14 @@ class CreateDataLoader:
             drop_last = drop_last,
             num_workers = 4,
         )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size = self.batch_size,
-            shuffle = not self.is_shuffle,
-            num_workers = 4,
-        )
+        val_loader = None
+        if len(val_dataset) > 0:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size = self.batch_size,
+                shuffle = not self.is_shuffle,
+                num_workers = 4,
+            )
 
         return train_loader, val_loader
 
@@ -204,10 +229,14 @@ class BaseDLModel(BaseModel):
         plot_train_progress: bool = False
     ):
         super().__init__(df_train, df_test, config)
+        self.seed = seed
+        set_random_seed(seed)
         self.device = pick_device()
         self.epochs = epochs
         self.batch_size = batch_size
         self.plot_train_progress = plot_train_progress
+        self.train_loader = None
+        self.val_loader = None
 
         self.num_feat = self.X_train.shape[1]
         self.criterion = nn.MSELoss() if loss_criterion is None else loss_criterion
@@ -221,13 +250,15 @@ class BaseDLModel(BaseModel):
         else:
             self.optimizer = optimizer
 
-        if df_test is not None:
+        if df_test is not None and self.plot_train_progress:
             DataloaderCreator = CreateDataLoader(
                 self.X_train, self.X_test, self.y_train, self.y_test,
                 batch_size = batch_size, seed = seed
             )
             self.train_loader, self.val_loader = DataloaderCreator.create()
             self.X_test_tensor = DataloaderCreator.X_test_tensor.to(self.device)
+        elif df_test is not None:
+            self.X_test_tensor = self._to_tensor(self.X_test)
 
 
     def _to_numpy(self, x):
@@ -246,6 +277,14 @@ class BaseDLModel(BaseModel):
             X = X.reshape(-1, 1)
 
         return torch.from_numpy(X).to(self.device)
+
+
+    def _to_target_tensor(self, y):
+        if isinstance(y, pd.Series):
+            y = y.to_numpy(dtype = np.float32, copy = False)
+        else:
+            y = np.asarray(y, dtype = np.float32)
+        return torch.from_numpy(y.reshape(-1)).to(self.device)
 
 
     def _score_r2(self, y_true, y_pred, use_adjusted = True, num_feat = None):
@@ -271,19 +310,22 @@ class BaseDLModel(BaseModel):
         train_adjusted_r2 = []
         val_adjusted_r2 = []
 
-        X = self._to_tensor(self.X_train)
-        y = self._to_tensor(self.y_train)
-        train_dataset = CustomDataset(X, y)
+        train_loader = self.train_loader
+        if train_loader is None:
+            X = self._to_tensor(self.X_train)
+            y = self._to_target_tensor(self.y_train)
+            train_dataset = CustomDataset(X, y)
 
-        # Avoid a last mini-batch of size 1 (BatchNorm crashes in train mode)
-        drop_last = (len(train_dataset) > self.batch_size) and (len(train_dataset) % self.batch_size == 1)
-        self.train_loader = DataLoader(
-            train_dataset,
-            batch_size = self.batch_size,
-            shuffle = True,
-            drop_last = drop_last,
-            num_workers = 0,
-        )
+            # Avoid a last mini-batch of size 1 (BatchNorm crashes in train mode)
+            drop_last = (len(train_dataset) > self.batch_size) and (len(train_dataset) % self.batch_size == 1)
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size = self.batch_size,
+                shuffle = True,
+                drop_last = drop_last,
+                num_workers = 0,
+            )
+            self.train_loader = train_loader
 
         for epoch in range(self.epochs):
             if self.plot_train_progress:
@@ -293,10 +335,17 @@ class BaseDLModel(BaseModel):
 
             # Training
             self.model.train()
-            for X_samples, y_samples in self.train_loader:
-                X_samples, y_samples = X_samples.to(self.device), y_samples.to(self.device)
+            for X_samples, y_samples in train_loader:
+                X_samples = X_samples.to(self.device)
+                y_samples = y_samples.to(self.device).view(-1)
                 self.optimizer.zero_grad()
-                y_preds = self.model(X_samples).view(-1)
+                y_preds = self.model(X_samples)
+                if y_preds.ndim == 2 and y_preds.shape[1] == 1:
+                    y_preds = y_preds.view(-1)
+                elif y_preds.ndim != 1:
+                    raise ValueError(
+                        f"Expected model output with shape [batch] or [batch, 1], but got {tuple(y_preds.shape)}."
+                    )
                 loss = self.criterion(y_preds, y_samples)
                 loss.backward()
                 self.optimizer.step()
@@ -308,7 +357,7 @@ class BaseDLModel(BaseModel):
 
             # Skip if this is unecessary
             if self.plot_train_progress:
-                train_loss /= len(self.train_loader)
+                train_loss /= len(train_loader)
                 train_losses.append(train_loss)
 
                 train_target_t = torch.cat(train_target, dim=0)
@@ -321,29 +370,41 @@ class BaseDLModel(BaseModel):
                 val_loss = 0.0
                 val_target = []
                 val_predict = []
+                if self.val_loader is not None and len(self.val_loader) > 0:
+                    self.model.eval()
+                    with torch.no_grad():
+                        for X_samples, y_samples in self.val_loader:
+                            X_samples = X_samples.to(self.device)
+                            y_samples = y_samples.to(self.device).view(-1)
+                            y_preds = self.model(X_samples)
+                            if y_preds.ndim == 2 and y_preds.shape[1] == 1:
+                                y_preds = y_preds.view(-1)
+                            elif y_preds.ndim != 1:
+                                raise ValueError(
+                                    f"Expected model output with shape [batch] or [batch, 1], but got {tuple(y_preds.shape)}."
+                                )
+                            loss = self.criterion(y_preds, y_samples)
 
-                self.model.eval()
-                with torch.no_grad():
-                    for X_samples, y_samples in self.val_loader:
-                        X_samples, y_samples = X_samples.to(self.device), y_samples.to(self.device)
-                        y_preds = self.model(X_samples)
-                        loss = self.criterion(y_preds, y_samples)
+                            val_loss += loss.item()
+                            val_target.append(y_samples.detach())
+                            val_predict.append(y_preds.detach())
 
-                        val_loss += loss.item()
-                        val_target.append(y_samples.detach())
-                        val_predict.append(y_preds.detach())
+                    val_loss /= len(self.val_loader)
+                    val_losses.append(val_loss)
 
-                val_loss /= len(self.val_loader)
-                val_losses.append(val_loss)
-
-                val_target_t = torch.cat(val_target, dim=0)
-                val_predict_t = torch.cat(val_predict, dim=0)
-                val_adjusted_r2.append(self._score_r2(
-                    y_true=val_target_t, y_pred=val_predict_t,
-                    use_adjusted=True, num_feat=self.num_feat
-                ))
-                if (epoch + 1) % 10 == 0:
-                    print(f'\nEPOCH {epoch + 1}:\tTraining loss: {train_loss:.3f}\tValidation loss: {val_loss:.3f}')
+                    val_target_t = torch.cat(val_target, dim=0)
+                    val_predict_t = torch.cat(val_predict, dim=0)
+                    val_adjusted_r2.append(self._score_r2(
+                        y_true=val_target_t, y_pred=val_predict_t,
+                        use_adjusted=True, num_feat=self.num_feat
+                    ))
+                    if (epoch + 1) % 10 == 0:
+                        print(f'\nEPOCH {epoch + 1}:\tTraining loss: {train_loss:.3f}\tValidation loss: {val_loss:.3f}')
+                else:
+                    val_losses.append(np.nan)
+                    val_adjusted_r2.append(np.nan)
+                    if (epoch + 1) % 10 == 0:
+                        print(f'\nEPOCH {epoch + 1}:\tTraining loss: {train_loss:.3f}')
 
         if self.plot_train_progress:
             self._plot_train_progress(
@@ -356,7 +417,6 @@ class BaseDLModel(BaseModel):
 
     def predict(self) -> pd.Series:
         self.model.eval()
-        index = None
         with torch.no_grad():
             X_test = self._to_tensor(self.X_test)
 
@@ -364,11 +424,16 @@ class BaseDLModel(BaseModel):
             loader = DataLoader(TensorDataset(X_test), batch_size = self.batch_size, shuffle = False)
 
             preds = []
-            with torch.no_grad():
-                for (Xb,) in loader:
-                    Xb = Xb.to(self.device)
-                    yb = self.model(Xb).view(-1).detach().cpu()
-                    preds.append(yb)
+            for (Xb,) in loader:
+                Xb = Xb.to(self.device)
+                yb = self.model(Xb)
+                if yb.ndim == 2 and yb.shape[1] == 1:
+                    yb = yb.view(-1)
+                elif yb.ndim != 1:
+                    raise ValueError(
+                        f"Expected model output with shape [batch] or [batch, 1], but got {tuple(yb.shape)}."
+                    )
+                preds.append(yb.detach().cpu())
 
             y_pred = torch.cat(preds).numpy()
 

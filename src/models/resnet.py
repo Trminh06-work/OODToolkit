@@ -1,4 +1,4 @@
-from .base_model import BaseDLModel, ModelConfig, normalization, activation_fn
+from .base_model import BaseDLModel, ModelConfig, normalization, activation_fn, set_random_seed
 
 import pandas as pd
 import torch.nn as nn
@@ -134,6 +134,10 @@ class ResnetRegressor(BaseDLModel):
         epochs: int = 100,
         batch_size: int = 1024,
     ):
+        if d_out != 1:
+            raise ValueError("ResnetRegressor only supports single-target regression (d_out must be 1).")
+
+        set_random_seed(random_state)
         self.param_dict = {
             "d_in": df_train.shape[1] - 1,
             "d": d,
