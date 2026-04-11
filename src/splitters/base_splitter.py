@@ -18,9 +18,8 @@ class BaseSplitter:
     def _preprocess(self):
         if self.df.shape[0] > 1000000 and not self.keep_size:
             self.df = self.df.sample(n = 800000, random_state = 42).reset_index(drop=True)
-            X = self.df.iloc[:, :-1]
             print("Remove some samples due to extensive size")
-            print(f"New Data: {X.shape[0]} samples, {X.shape[1]} features")
+            print(f"New Data: {self.df.shape[0]} samples, {self.df.shape[1] - 1} features")
 
 
     @abstractmethod
@@ -33,8 +32,8 @@ class BaseSplitter:
             raise ValueError("test_size is not specified or incorrectly given")
         self.file_name = file_name
         self.df = df
-        self.X = df.iloc[:, :-1]
-        self.y = df.iloc[:, -1]
         self.test_size = test_size
 
         self._preprocess()
+        self.X = self.df.iloc[:, :-1]
+        self.y = self.df.iloc[:, -1]

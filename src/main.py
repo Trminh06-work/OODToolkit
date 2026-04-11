@@ -256,7 +256,7 @@ if __name__ == "__main__":
     modules = split_modules + model_modules
     splitters = None # ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
     models = [
-        # "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
+        "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
         # "DTRegressor", "RFRegressor", "GBRegressor", "ABRegressor", "XGBRegressor", "LightGBMRegressor",
         # "ResnetRegressor"
     ]
