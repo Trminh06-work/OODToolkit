@@ -582,7 +582,7 @@ class BasicGeometricSplit(BaseSplitter):
             Select the test points based on several Hyperballs, whose centers are determined by KMeans Clustering technique and predefined TEST_SIZE
         """
         # Create directory if not exist
-        output_dir = f"../data/splitted/{self.file_name}/KMeans_Hyperballs"
+        output_dir = f"../data/splitted/{self.file_name}/Reverse_KMeans_Hyperballs"
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
