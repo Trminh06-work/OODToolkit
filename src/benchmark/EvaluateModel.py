@@ -279,12 +279,22 @@ class EvaluateModel:
                                     columns = X_test.columns,
                                 )
 
+                                y_scaler = StandardScaler()
+                                y_train_scaled = pd.Series(
+                                    y_scaler.fit_transform(y_train.to_numpy().reshape(-1, 1)).ravel(),
+                                    name = y_train.name,
+                                )
+                                y_test_scaled = pd.Series(
+                                    y_scaler.transform(y_test.to_numpy().reshape(-1, 1)).ravel(),
+                                    name = y_test.name,
+                                )
+
                                 scaled_train = pd.concat(
-                                    [ X_train_scaled.reset_index(drop = True), y_train.reset_index(drop = True) ],
+                                    [ X_train_scaled.reset_index(drop = True), y_train_scaled.reset_index(drop = True) ],
                                     axis = 1
                                 )
                                 scaled_test = pd.concat(
-                                    [ X_test_scaled.reset_index(drop = True), y_test.reset_index(drop = True) ],
+                                    [ X_test_scaled.reset_index(drop = True), y_test_scaled.reset_index(drop = True) ],
                                     axis = 1
                                 )
 
@@ -295,7 +305,25 @@ class EvaluateModel:
                                     **variant_model_params,
                                 )
                                 model.fit()
-                                split_results[idx] = model.evaluate()
+                                y_pred = np.asarray(model.predict(), dtype = float).ravel()
+                                y_true = y_test_scaled.to_numpy(dtype = float, copy = False)
+
+                                if y_pred.shape[0] != y_true.shape[0]:
+                                    raise ValueError(
+                                        f"Prediction length mismatch: y_pred={y_pred.shape[0]}, y_true={y_true.shape[0]}"
+                                    )
+                                evaluator = Evaluator(y_pred, y_true)
+                                split_results[idx] = {
+                                    "MSE": evaluator.score_MSE(),
+                                    "RMSE": evaluator.score_RMSE(),
+                                    "MAE": evaluator.score_MAE(),
+                                    "Adjusted R2 score": evaluator.score_r2(
+                                        use_adjusted = True,
+                                        num_feat = model.X_train.shape[1],
+                                    ),
+                                    "MAPE": evaluator.score_MAPE(),
+                                    "sMAPE": evaluator.score_sMAPE(),
+                                }
                             except Exception as e:
                                 print(
                                     f"Unsuccessful evaluation due to '{e}'. Specifically, at model: {model_name}, "
