@@ -61,7 +61,7 @@ class DataSaver:
 class AnalystModel:
     def __init__(
         self,
-        alpha: float = 0.05,
+        alpha: float = 0.01,
         agg_method: str = "median",   # or mean (less robust)
         results_root: str = "Results",
         split_data_root: str = "../data/splitted",
@@ -461,23 +461,83 @@ class AnalystModel:
         """
         This framework evaluates a single model across splitting strategies.
 
-        The returned table uses datasets as paired comparison blocks and splits
-        as columns, so downstream statistical tests can compare split types for
-        one fixed model.
+        The returned table keeps split regimes as columns and uses rows indexed
+        by (model, dataset), so the orientation is model-first while preserving
+        dataset-level paired comparison blocks.
         """
         available_models = sorted(long_df["model"].unique())
         if model_label not in available_models:
             raise ValueError(f"{model_label} does not exist. The values must be {available_models}")
 
         sub = long_df[long_df["model"] == model_label]
-        wide = sub.pivot_table(index = "dataset", columns = "split", values = "score", aggfunc = "first")
+        wide = sub.pivot_table(
+            index = ["model", "dataset"],
+            columns = "split",
+            values = "score",
+            aggfunc = "first",
+        )
 
-        # keep only datasets where ALL splits exist for this model (paired comparisons)
+        # Keep only paired blocks where this model has all split regimes.
         wide = wide.dropna(axis = 0, how = "any")
 
         if wide.empty:
-            raise ValueError(f"No complete datasets for model={model_label} across all splits.")
+            raise ValueError(f"No complete (model, dataset) blocks for model={model_label} across all splits.")
         return wide
+
+
+    def construct_model_wise_vs_random_table(
+        self,
+        long_df: pd.DataFrame,
+        model_label: str,
+        baseline_split: str = "Random_Split",
+    ):
+        """
+        Build a model-wise table where each split is compared to a baseline split.
+
+        Returns a wide table indexed by (model, dataset), with columns as non-baseline
+        split regimes and values computed as:
+            score(split) - score(baseline_split)
+
+        Positive values mean the split is worse than baseline (for error metrics),
+        and negative values mean better than baseline.
+        """
+        available_models = sorted(long_df["model"].unique())
+        if model_label not in available_models:
+            raise ValueError(f"{model_label} does not exist. The values must be {available_models}")
+
+        sub = long_df[long_df["model"] == model_label]
+        available_splits = sorted(sub["split"].unique())
+        if baseline_split not in available_splits:
+            raise ValueError(
+                f"{baseline_split} does not exist for model={model_label}. "
+                f"The values must be {available_splits}"
+            )
+
+        wide = sub.pivot_table(
+            index = ["model", "dataset"],
+            columns = "split",
+            values = "score",
+            aggfunc = "first",
+        )
+
+        # Keep only paired blocks where all split regimes are present.
+        wide = wide.dropna(axis = 0, how = "any")
+
+        compare_splits = [split_type for split_type in available_splits if split_type != baseline_split]
+        if not compare_splits:
+            raise ValueError(
+                f"No non-baseline split regimes to compare against {baseline_split} for model={model_label}."
+            )
+
+        if wide.empty:
+            raise ValueError(
+                f"No complete (model, dataset) blocks for model={model_label} across all splits "
+                f"including baseline={baseline_split}."
+            )
+
+        baseline_vals = wide[baseline_split]
+        compared = wide[compare_splits].sub(baseline_vals, axis = 0)
+        return compared
 
 
     def holm_adjust(self, pvals):
@@ -578,9 +638,9 @@ class AnalystModel:
             print(f"\n⚠️ Friedman not significant (p≥{self.alpha})")
 
 
-    # -------------------------------
+    # ---------------------------------------------------------------------------------------------
     # (LaTeX formatting)
-    # -------------------------------
+    # ---------------------------------------------------------------------------------------------
     def _fmt_rank_latex(self, val: float, tag: str) -> str:
         """tag in {'best','tie','normal'}."""
         if tag == "best":
@@ -588,6 +648,23 @@ class AnalystModel:
         if tag == "tie":
             return rf"\textcolor{{blue}}{{{val:.2f}}}"
         return f"{val:.2f}"
+
+
+    # Benchmark all methods against the baseline method
+    def _fmt_delta_latex(self, val: float) -> str:
+        """Format split-baseline delta for LaTeX (green=better, red=worse)."""
+        if pd.isna(val):
+            return "--"
+
+        txt = f"{val:+.3f}".rstrip("0").rstrip(".")
+        if txt in {"+0", "-0"}:
+            txt = "0"
+
+        if val < 0:
+            return rf"\textcolor{{teal}}{{{txt}}}"
+        if val > 0:
+            return rf"\textcolor{{red}}{{{txt}}}"
+        return txt
 
 
     def print_splitwise_meanrank_latex(self, latex_buffer: dict, split_types) -> None:
@@ -625,6 +702,23 @@ class AnalystModel:
                     continue
                 rank, tag = latex_buffer[split_type][model_label]
                 row.append(self._fmt_rank_latex(float(rank), tag))
+            print(" & ".join(row) + r" \\")
+            print()
+
+
+    def print_modelwise_vs_random_latex(self, latex_buffer: dict, model_labels, split_types) -> None:
+        """
+        latex_buffer: {model_label: {split_type: delta_vs_random}}
+        Prints rows like: Model & -0.12 & +0.03 & ... \\
+        """
+        for model_label in model_labels:
+            model_name = str(model_label).replace("_", r"\_")
+            row = [model_name]
+            for split_type in split_types:
+                if model_label not in latex_buffer or split_type not in latex_buffer[model_label]:
+                    row.append("--")
+                    continue
+                row.append(self._fmt_delta_latex(float(latex_buffer[model_label][split_type])))
             print(" & ".join(row) + r" \\")
             print()
 
@@ -716,6 +810,10 @@ class AnalystModel:
         print(summary.to_string(index=False))
 
         # print LaTeX rows in your requested style
+        print("The split types are:")
+        for split in split_types:
+            print(split, end = " | ")
+
         print("\n" + "#" * 90)
         print("LATEX ROWS (mean ranks per split; red=best, blue=tied-with-best)\n")
         self.print_splitwise_meanrank_latex(latex_buffer, split_types)
@@ -736,8 +834,9 @@ class AnalystModel:
 
         summary_rows = []
 
-        # buffer to build LaTeX rows at the end
-        latex_buffer = {}  # {split_type: {model_label: (mean_rank, tag)}}
+        # Build per-model for model-row/split-column LaTeX output.
+        latex_buffer_by_model = {}  # {model_label: {split_type: (mean_rank, tag)}}
+        split_types_seen = set()
 
         model_labels = sorted(long_df["model"].unique())
 
@@ -788,8 +887,9 @@ class AnalystModel:
 
             # store mean ranks + highlight tags for LaTeX export
             for split_type, rank in mr.items():
-                latex_buffer.setdefault(split_type, {})
-                latex_buffer[split_type][model_label] = (float(rank), highlight[split_type])
+                split_types_seen.add(split_type)
+                latex_buffer_by_model.setdefault(model_label, {})
+                latex_buffer_by_model[model_label][split_type] = (float(rank), highlight[split_type])
 
             summary_rows.append({
                 "model": model_label,
@@ -805,6 +905,90 @@ class AnalystModel:
         print("MODEL-WISE SUMMARY")
         print(summary.to_string(index=False))
 
+        split_types = sorted(split_types_seen)
+
+        print("The split types are:")
+        for split in split_types:
+            print(split, end = " | ")
+
         print("\n" + "#" * 90)
-        print("LATEX ROWS (mean ranks per model; red=best, blue=tied-with-best)\n")
-        self.print_modelwise_meanrank_latex(latex_buffer, model_labels)
+        print("LATEX ROWS (rows=models, cols=splits; red=best, blue=tied-with-best)\n")
+        self.print_splitwise_meanrank_latex(latex_buffer_by_model, split_types)
+
+
+    def model_wise_vs_random_latex_table(
+        self,
+        long_df: pd.DataFrame = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        baseline_split: str = "Random_Split",
+    ):
+        """
+        Build model-wise split deltas versus Random_Split and print LaTeX rows.
+
+        Each cell is:
+            aggregate_over_datasets(score(split) - score(baseline_split))
+        where aggregate_over_datasets follows self.agg_method.
+        """
+        if long_df is None:
+            long_df = self.construct_full_stats_table(
+                metric = "RMSE",
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+            )
+
+        available_splits = sorted(long_df["split"].unique())
+        if baseline_split not in available_splits:
+            raise ValueError(f"{baseline_split} does not exist. The values must be {available_splits}")
+
+        split_types = [split_type for split_type in available_splits if split_type != baseline_split]
+        if not split_types:
+            raise ValueError(f"No non-baseline split regimes to compare against {baseline_split}.")
+
+        model_labels = sorted(long_df["model"].unique())
+        latex_buffer = {}  # {model_label: {split_type: delta}}
+        summary_rows = []
+
+        for model_label in model_labels:
+            print("\n" + "=" * 90)
+            print(f"MODEL: {model_label}")
+
+            wide_delta = self.construct_model_wise_vs_random_table(
+                long_df,
+                model_label,
+                baseline_split = baseline_split,
+            )
+            print(f"Datasets (paired blocks): {wide_delta.shape[0]} | Compared splits: {wide_delta.shape[1]}")
+
+            agg_delta = wide_delta.apply(
+                lambda col: self.aggregate(col.to_numpy(dtype=float)),
+                axis = 0,
+            ).sort_values()
+
+            print(f"\nAggregated delta vs {baseline_split} (split - baseline; lower is better):")
+            print(agg_delta)
+
+            for split_type, delta in agg_delta.items():
+                latex_buffer.setdefault(model_label, {})
+                latex_buffer[model_label][split_type] = float(delta)
+
+            summary_rows.append({
+                "model": model_label,
+                "datasets_used": wide_delta.shape[0],
+                "splits_compared": wide_delta.shape[1],
+                "best_split_vs_random": agg_delta.index[0],
+                "best_delta": float(agg_delta.iloc[0]),
+            })
+
+        summary = pd.DataFrame(summary_rows).sort_values("model")
+        print("\n" + "#" * 90)
+        print("MODEL-WISE VS RANDOM SUMMARY")
+        print(summary.to_string(index=False))
+
+        print("The split types are:")
+        for split in split_types:
+            print(split, end = " | ")
+
+        print("\n" + "#" * 90)
+        print(f"LATEX ROWS (delta vs {baseline_split}; green=better, red=worse)\n")
+        self.print_modelwise_vs_random_latex(latex_buffer, model_labels, split_types)

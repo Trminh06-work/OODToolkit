@@ -160,6 +160,13 @@ def main_eval(
             include_variants = splitwise_include_variants,
         )
 
+        print("Running model-wise evaluation (Random Split as benchmark)")
+        Analyst.model_wise_vs_random_latex_table(
+            baseline_only = splitwise_baseline_only,
+            include_variants = splitwise_include_variants,
+            baseline_split = "Random_Split"
+        )
+
 
 
 
