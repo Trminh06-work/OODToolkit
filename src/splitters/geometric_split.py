@@ -304,7 +304,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test.to_parquet(path, index = False)
 
 
-    def _reverse_multiple_hyperballs(self, num_balls):
+    def _reverse_multiple_hyperballs(self):
         # Create directory if not exist
         output_dir = f"../data/splitted/{self.file_name}/Reverse_Multiple_Hyperballs"
         if not os.path.exists(output_dir):
@@ -318,7 +318,7 @@ class BasicGeometricSplit(BaseSplitter):
             inclusive_data = set()
 
             np.random.seed(SEED)
-            sub_test_sizes = self._random_sums(self.test_size, num_balls)
+            sub_test_sizes = self._random_sums(self.test_size, self.num_balls)
 
             for sub_test_size in sub_test_sizes:
                 np.random.seed(SEED)
@@ -460,10 +460,6 @@ class BasicGeometricSplit(BaseSplitter):
                 else:
                   high = point - epsilon
 
-                if cur_proportion == self._compute_proportion(X_train):
-                    break
-                cur_proportion = self._compute_proportion(X_train)
-
             y_train = self.y.iloc[X_train.index]
             X_test = self.X.iloc[~self.X.index.isin(X_train.index)]
             y_test = self.y.iloc[~self.y.index.isin(X_train.index)]
@@ -504,10 +500,6 @@ class BasicGeometricSplit(BaseSplitter):
                   lo = point + epsilon
                 else:
                   high = point - epsilon
-
-                if cur_proportion == self._compute_proportion(X_test):
-                    break
-                cur_proportion = self._compute_proportion(X_test)
 
             y_test = self.y.iloc[X_test.index]
             X_train = self.X.iloc[~self.X.index.isin(X_test.index)]

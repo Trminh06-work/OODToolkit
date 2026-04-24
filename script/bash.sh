@@ -1,14 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name=OODToolkit
-#SBATCH --array=0-0
+#SBATCH --job-name=SLipInt-0
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
-#SBATCH --partition=gpu
-#SBATCH --gres=gpu:2
-#SBATCH --time=24:00:00
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=2
+#SBATCH --partition=Virtual
+#SBATCH --time=48:00:00
+#SBATCH --mem=10G
 #SBATCH -o logs/%x_%A_%a.out
 #SBATCH -e logs/%x_%A_%a.err
 
@@ -24,13 +22,22 @@ Options:
   --help                               Show this message
 
 Config file variables:
-  MODULES="geometric_split,random_split,tree_models"
+  MODULES="geometric_split,random_split,tree_models,slip_interpolant"
+  # Available models:
+  # HuberLinearRegressor, HuberPolynomialRegressor, SVMRegressor, KNNRegressor,
+  # DTRegressor, RFRegressor, GBRegressor, ABRegressor, XGBRegressor, LightGBMRegressor,
+  # ResnetRegressor, SLipInterpolant
   SPLITTERS="RandomSplit"
-  MODELS="RFRegressor,LightGBMRegressor"
+  MODELS="RFRegressor,LightGBMRegressor,SLipInterpolant"
+  CPU_MODELS="RFRegressor,LightGBMRegressor"
+  GPU_MODELS="ResnetRegressor"
+  ARRAY_MODELS="RFRegressor,GBRegressor,ResnetRegressor"
+  ARRAY_DATASETS="bike,concrete,energy"
   REQUIRE_EVAL="true"
   SPLITWISE_BASELINE_ONLY="false"
   SPLITWISE_INCLUDE_VARIANTS="true"
   MODELWISE_EVAL="false"
+  PER_DATASET_TABLE_EVAL="false"
   DATASET_NAMES="bike"
   PYTHON_BIN="python"
   CONDA_ENV_NAME="jupyter_env"
@@ -81,6 +88,14 @@ SPLITTERS=""
 # Store the comma-separated splitter class list loaded from the config file.
 MODELS=""
 # Store the comma-separated model class list loaded from the config file.
+CPU_MODELS=""
+# Store the comma-separated CPU-only model class list loaded from the config file.
+GPU_MODELS=""
+# Store the comma-separated GPU-only model class list loaded from the config file.
+ARRAY_MODELS=""
+# Store a comma-separated model sweep list where each Slurm array task runs one model.
+ARRAY_DATASETS=""
+# Store a comma-separated dataset sweep list where each Slurm array task runs one dataset.
 REQUIRE_EVAL=""
 # Store the requested evaluation flag before normalization.
 SPLITWISE_BASELINE_ONLY=""
@@ -89,6 +104,8 @@ SPLITWISE_INCLUDE_VARIANTS=""
 # Store the split-wise include-variants flag before normalization.
 MODELWISE_EVAL=""
 # Store the model-wise evaluation flag before normalization.
+PER_DATASET_TABLE_EVAL=""
+# Store the per-dataset table evaluation flag before normalization.
 DATASET_NAMES=""
 # Store the comma-separated dataset list loaded from the config file.
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -132,6 +149,14 @@ SPLITTERS="${SPLITTERS:-}"
 # Read the configured splitter list, or leave empty if omitted.
 MODELS="${MODELS:-}"
 # Read the configured model list, or leave empty if omitted.
+CPU_MODELS="${CPU_MODELS:-}"
+# Read the configured CPU model list, or leave empty if omitted.
+GPU_MODELS="${GPU_MODELS:-}"
+# Read the configured GPU model list, or leave empty if omitted.
+ARRAY_MODELS="${ARRAY_MODELS:-}"
+# Read the configured array-model sweep list, or leave empty if omitted.
+ARRAY_DATASETS="${ARRAY_DATASETS:-}"
+# Read the configured array-dataset sweep list, or leave empty if omitted.
 REQUIRE_EVAL="${REQUIRE_EVAL:-}"
 # Read the configured evaluation flag before normalization.
 SPLITWISE_BASELINE_ONLY="${SPLITWISE_BASELINE_ONLY:-}"
@@ -140,6 +165,8 @@ SPLITWISE_INCLUDE_VARIANTS="${SPLITWISE_INCLUDE_VARIANTS:-}"
 # Read the configured include-variants flag before normalization.
 MODELWISE_EVAL="${MODELWISE_EVAL:-}"
 # Read the configured model-wise evaluation flag before normalization.
+PER_DATASET_TABLE_EVAL="${PER_DATASET_TABLE_EVAL:-}"
+# Read the configured per-dataset table evaluation flag before normalization.
 DATASET_NAMES="${DATASET_NAMES:-}"
 # Read the configured dataset list, or leave empty if omitted.
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -155,6 +182,8 @@ SPLITWISE_INCLUDE_VARIANTS="$(normalize_bool "$SPLITWISE_INCLUDE_VARIANTS" "Fals
 # Default to excluding variants from split-wise comparison.
 MODELWISE_EVAL="$(normalize_bool "$MODELWISE_EVAL" "False")"
 # Default to skipping model-wise comparison unless explicitly enabled.
+PER_DATASET_TABLE_EVAL="$(normalize_bool "$PER_DATASET_TABLE_EVAL" "False")"
+# Default to skipping per-dataset table export unless explicitly enabled.
 
 echo "REPO_ROOT=${REPO_ROOT}"
 # Print the resolved repository root to the Slurm output stream for debugging.
@@ -198,6 +227,14 @@ export SPLITTERS
 # Make the splitter list available to the embedded Python process.
 export MODELS
 # Make the model list available to the embedded Python process.
+export CPU_MODELS
+# Make the CPU model list available to the phase runner.
+export GPU_MODELS
+# Make the GPU model list available to the phase runner.
+export ARRAY_MODELS
+# Make the model sweep list available to array-task selection logic.
+export ARRAY_DATASETS
+# Make the dataset sweep list available to array-task selection logic.
 export REQUIRE_EVAL
 # Make the normalized evaluation flag available to Python.
 export SPLITWISE_BASELINE_ONLY
@@ -206,6 +243,8 @@ export SPLITWISE_INCLUDE_VARIANTS
 # Make the normalized include-variants flag available to Python.
 export MODELWISE_EVAL
 # Make the normalized model-wise evaluation flag available to Python.
+export PER_DATASET_TABLE_EVAL
+# Make the normalized per-dataset table evaluation flag available to Python.
 export DATASET_NAMES
 # Make the dataset list available to Python.
 export REPO_ROOT
@@ -280,6 +319,14 @@ printf 'Splitters: %s\n' "${SPLITTERS:-<none>}"
 # Echo the selected splitters or show a placeholder if none were passed.
 printf 'Models: %s\n' "${MODELS:-<none>}"
 # Echo the selected models or show a placeholder if none were passed.
+printf 'CPU models: %s\n' "${CPU_MODELS:-<none>}"
+# Echo the selected CPU models or show a placeholder if none were passed.
+printf 'GPU models: %s\n' "${GPU_MODELS:-<none>}"
+# Echo the selected GPU models or show a placeholder if none were passed.
+printf 'Array models: %s\n' "${ARRAY_MODELS:-<none>}"
+# Echo the model sweep list used for Slurm array sharding.
+printf 'Array datasets: %s\n' "${ARRAY_DATASETS:-<none>}"
+# Echo the dataset sweep list used for Slurm array sharding.
 printf 'Require eval: %s\n' "${REQUIRE_EVAL}"
 # Echo whether evaluation is enabled.
 printf 'Splitwise baseline only: %s\n' "${SPLITWISE_BASELINE_ONLY}"
@@ -288,48 +335,167 @@ printf 'Splitwise include variants: %s\n' "${SPLITWISE_INCLUDE_VARIANTS}"
 # Echo the split-wise include-variants flag.
 printf 'Modelwise eval: %s\n' "${MODELWISE_EVAL}"
 # Echo the model-wise evaluation flag.
+printf 'Per-dataset table eval: %s\n' "${PER_DATASET_TABLE_EVAL}"
+# Echo the per-dataset table evaluation flag.
 printf 'Dataset names: %s\n' "${DATASET_NAMES:-<all>}"
 # Echo the selected dataset names or show a placeholder if all datasets are used.
 
-"${PYTHON_BIN}" - <<'PY'
-# Run inline Python that forwards the shell arguments into src.main.main(...).
-import os
-# Access exported environment variables from the shell wrapper.
-from main import main
-# Import the repository's main pipeline entrypoint.
+csv_pick_by_task() {
+    # Pick one comma-separated value based on the current SLURM_ARRAY_TASK_ID.
+    local csv_values="$1"
+    local task_id="${SLURM_ARRAY_TASK_ID:-0}"
+    local -a values
+    local IFS=','
+    read -r -a values <<< "${csv_values}"
 
+    if (( ${#values[@]} == 0 )); then
+        printf ''
+        return
+    fi
+
+    if (( task_id < 0 || task_id >= ${#values[@]} )); then
+        printf 'SLURM_ARRAY_TASK_ID=%s is out of range for list of size %s\n' "${task_id}" "${#values[@]}" >&2
+        exit 1
+    fi
+
+    printf '%s' "$(printf '%s' "${values[${task_id}]}" | xargs)"
+}
+
+csv_contains() {
+    # Check whether a CSV list contains an exact token.
+    local csv_values="$1"
+    local needle="$2"
+    local IFS=','
+    local token
+    read -r -a _tokens <<< "${csv_values}"
+    for token in "${_tokens[@]}"; do
+        token="$(printf '%s' "${token}" | xargs)"
+        if [[ "${token}" == "${needle}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [[ -n "${ARRAY_MODELS}" ]]; then
+    # Shard by model: each array task runs exactly one model.
+    SELECTED_MODEL="$(csv_pick_by_task "${ARRAY_MODELS}")"
+    printf 'Array-selected model: %s\n' "${SELECTED_MODEL}"
+
+    if [[ -n "${CPU_MODELS}" || -n "${GPU_MODELS}" ]]; then
+        if csv_contains "${GPU_MODELS}" "${SELECTED_MODEL}"; then
+            GPU_MODELS="${SELECTED_MODEL}"
+            CPU_MODELS=""
+        elif csv_contains "${CPU_MODELS}" "${SELECTED_MODEL}"; then
+            CPU_MODELS="${SELECTED_MODEL}"
+            GPU_MODELS=""
+        else
+            # Fall back to single-pass mode if the selected model is outside CPU/GPU buckets.
+            MODELS="${SELECTED_MODEL}"
+            CPU_MODELS=""
+            GPU_MODELS=""
+        fi
+    else
+        MODELS="${SELECTED_MODEL}"
+    fi
+fi
+
+if [[ -n "${ARRAY_DATASETS}" ]]; then
+    # Shard by dataset: each array task runs exactly one dataset.
+    SELECTED_DATASET="$(csv_pick_by_task "${ARRAY_DATASETS}")"
+    DATASET_NAMES="${SELECTED_DATASET}"
+    printf 'Array-selected dataset: %s\n' "${SELECTED_DATASET}"
+fi
+
+run_main_phase() {
+    # Run one pipeline phase with optional CPU-only device visibility.
+    local phase_name="$1"
+    local phase_splitters="$2"
+    local phase_models="$3"
+    local phase_require_eval="$4"
+    local phase_device="$5"
+
+    printf 'Running phase: %s\n' "${phase_name}"
+
+    if [[ "${phase_device}" == "cpu" ]]; then
+        # Hide GPUs from this subprocess so CPU-bound models never claim CUDA.
+        CUDA_VISIBLE_DEVICES="" \
+        PHASE_SPLITTERS="${phase_splitters}" \
+        PHASE_MODELS="${phase_models}" \
+        PHASE_REQUIRE_EVAL="${phase_require_eval}" \
+        "${PYTHON_BIN}" - <<'PY'
+import os
+from main import main
 
 def parse_csv(value: str):
-    # Convert a comma-separated string into a Python list, or return None if empty.
     if not value:
-        # Treat an empty string as "argument not provided".
         return None
     parsed = [item.strip() for item in value.split(",") if item.strip()]
-    # Split on commas, trim whitespace, and discard empty items.
     return parsed or None
-    # Return the parsed list, or None if nothing valid remained.
-
 
 main(
-    # Execute the toolkit pipeline with values translated from shell inputs.
     modules=parse_csv(os.environ.get("MODULES", "")),
-    # Pass module names for dynamic class loading.
-    splitters=parse_csv(os.environ.get("SPLITTERS", "")),
-    # Pass splitter class names to run the split stage.
-    models=parse_csv(os.environ.get("MODELS", "")),
-    # Pass model class names to run the training stage.
-    require_eval=os.environ["REQUIRE_EVAL"] == "True",
-    # Convert the normalized evaluation flag back to a Python boolean.
+    splitters=parse_csv(os.environ.get("PHASE_SPLITTERS", "")),
+    models=parse_csv(os.environ.get("PHASE_MODELS", "")),
+    require_eval=os.environ["PHASE_REQUIRE_EVAL"] == "True",
     splitwise_baseline_only=os.environ["SPLITWISE_BASELINE_ONLY"] == "True",
-    # Convert the baseline-only flag back to a Python boolean.
     splitwise_include_variants=os.environ["SPLITWISE_INCLUDE_VARIANTS"] == "True",
-    # Convert the include-variants flag back to a Python boolean.
     modelwise_eval=os.environ["MODELWISE_EVAL"] == "True",
-    # Convert the model-wise evaluation flag back to a Python boolean.
+    per_dataset_table_eval=os.environ["PER_DATASET_TABLE_EVAL"] == "True",
     dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
-    # Restrict execution to the requested dataset names, if any.
 )
 PY
+    else
+        # Inherit Slurm GPU visibility for GPU-capable phases.
+        PHASE_SPLITTERS="${phase_splitters}" \
+        PHASE_MODELS="${phase_models}" \
+        PHASE_REQUIRE_EVAL="${phase_require_eval}" \
+        "${PYTHON_BIN}" - <<'PY'
+import os
+from main import main
+
+def parse_csv(value: str):
+    if not value:
+        return None
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    return parsed or None
+
+main(
+    modules=parse_csv(os.environ.get("MODULES", "")),
+    splitters=parse_csv(os.environ.get("PHASE_SPLITTERS", "")),
+    models=parse_csv(os.environ.get("PHASE_MODELS", "")),
+    require_eval=os.environ["PHASE_REQUIRE_EVAL"] == "True",
+    splitwise_baseline_only=os.environ["SPLITWISE_BASELINE_ONLY"] == "True",
+    splitwise_include_variants=os.environ["SPLITWISE_INCLUDE_VARIANTS"] == "True",
+    modelwise_eval=os.environ["MODELWISE_EVAL"] == "True",
+    per_dataset_table_eval=os.environ["PER_DATASET_TABLE_EVAL"] == "True",
+    dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
+)
+PY
+    fi
+}
+
+if [[ -n "${CPU_MODELS}" || -n "${GPU_MODELS}" ]]; then
+    # Mixed scheduling mode: split once, train CPU/GPU model groups separately, then evaluate once.
+    if [[ -n "${SPLITTERS}" ]]; then
+        run_main_phase "split" "${SPLITTERS}" "" "False" "gpu"
+    fi
+
+    if [[ -n "${CPU_MODELS}" ]]; then
+        run_main_phase "train-cpu-models" "" "${CPU_MODELS}" "False" "cpu"
+    fi
+
+    if [[ -n "${GPU_MODELS}" ]]; then
+        run_main_phase "train-gpu-models" "" "${GPU_MODELS}" "False" "gpu"
+    fi
+
+    if [[ "${REQUIRE_EVAL}" == "True" ]]; then
+        run_main_phase "evaluate" "" "" "True" "gpu"
+    fi
+else
+    # Backward-compatible single-pass mode.
+    run_main_phase "single-pass" "${SPLITTERS}" "${MODELS}" "${REQUIRE_EVAL}" "gpu"
+fi
 
 T2=$(date +%s)
 # Record the finish time in Unix seconds.

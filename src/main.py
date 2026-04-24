@@ -141,12 +141,15 @@ def main_eval(
     splitwise_baseline_only: bool = True,
     splitwise_include_variants: bool = False,
     modelwise_eval: bool = False,
+    per_dataset_table_eval: bool = False,
 ):
     Analyst = AnalystModel(results_root = DEFAULT_RESULTS_DIR, split_data_root = DEFAULT_SPLIT_DIR)
 
+    print("============================================================")
     print("Running split-agnostic evaluation on baseline models")
     Analyst.split_agnostic_test()
 
+    print("============================================================")
     print("Running split-wise evaluation")
     Analyst.split_wise_test(
         baseline_only = splitwise_baseline_only,
@@ -154,17 +157,35 @@ def main_eval(
     )
 
     if modelwise_eval:
+        print("============================================================")
         print("Running model-wise evaluation")
         Analyst.model_wise_test(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
         )
 
-        print("Running model-wise evaluation (Random Split as benchmark)")
+        print("============================================================")
+        print("Running model-wise diagnostic (Random Split as benchmark)")
         Analyst.model_wise_vs_random_latex_table(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
             baseline_split = "Random_Split"
+        )
+
+        print("============================================================")
+        print("Running model-wise evaluation (Random Split as benchmark)")
+        Analyst.robustness_model_comparison_latex(
+            baseline_only = splitwise_baseline_only,
+            include_variants = splitwise_include_variants,
+        )
+
+    if per_dataset_table_eval:
+        print("============================================================")
+        print("Running per-dataset full table export")
+        Analyst.per_dataset_table_test(
+            baseline_only = splitwise_baseline_only,
+            include_variants = splitwise_include_variants,
+            print_latex = True,
         )
 
 
@@ -178,6 +199,7 @@ def main(
     splitwise_baseline_only: bool = True,
     splitwise_include_variants: bool = False,
     modelwise_eval: bool = False,
+    per_dataset_table_eval: bool = False,
     dataset_names: List[str] = None,
     seeds: List[int] = None,
     test_size: float = DEFAULT_TEST_SIZE,
@@ -203,6 +225,7 @@ def main(
         splitwise_baseline_only: bool, True as default. Compare only baseline models in split-wise statistical tests
         splitwise_include_variants: bool, False as default. Include model variants as separate competitors in split-wise tests
         modelwise_eval: bool, False as default. Run model-wise statistical tests that compare split types for each model
+        per_dataset_table_eval: bool, False as default. Print one full nRMSE table per dataset (models x splits), plus LaTeX rows
     Note:
         The split-agnostic table only uses the baseline configuration. In contrast, the split-wise tables are more flexible.
             To construct a full split-wise table including all model variants set splitwise_baseline_only = False and splitwise_include_variants = True.
@@ -254,6 +277,7 @@ def main(
             splitwise_baseline_only = splitwise_baseline_only,
             splitwise_include_variants = splitwise_include_variants,
             modelwise_eval = modelwise_eval,
+            per_dataset_table_eval = per_dataset_table_eval,
         )
 
 
@@ -263,18 +287,19 @@ if __name__ == "__main__":
     modules = split_modules + model_modules
     splitters = None # ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
     models = [
-        "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
+        # "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
         # "DTRegressor", "RFRegressor", "GBRegressor", "ABRegressor", "XGBRegressor", "LightGBMRegressor",
-        # "ResnetRegressor"
+        # "ResnetRegressor",
     ]
-    dataset_names = ["bike"]
+    dataset_names = ["synthetic_0"]
     main(
         modules,
         splitters,
         models,
-        require_eval = True,
+        require_eval = False,
         splitwise_baseline_only = False,
         splitwise_include_variants = False,
         modelwise_eval = True,
+        per_dataset_table_eval = False,
         dataset_names = dataset_names
     )
