@@ -89,6 +89,11 @@ class Evaluator:
         return mae / self.y_true.std()
 
 
+    def score_maximal_AE(self):
+        abs_errors = abs(self.y_true - self.y_pred)
+        return max(abs_errors)
+
+
 
 class EvaluateModel:
     def __init__(self,
@@ -98,6 +103,7 @@ class EvaluateModel:
         result_dir_location = None,
         config = None,
         config_dir_location = None,
+        skip_existing: bool = True,
     ):
         self.models = models
         self.dataset_names = dataset_names
@@ -105,6 +111,7 @@ class EvaluateModel:
         self.target_dir = Path(result_dir_location) if result_dir_location is not None else None
         self.config = ModelConfig() if config is None else config
         self.config_dir = Path(config_dir_location) if config_dir_location is not None else None
+        self.skip_existing = skip_existing
 
 
     def _default_variant(self):
@@ -233,7 +240,18 @@ class EvaluateModel:
 
                 for dataset_dir in dataset_dirs:
                     dataset_name = dataset_dir.name
+                    output_file = model_output_dir / f"{dataset_name}.json"
                     results = {}
+                    if self.skip_existing and output_file.exists():
+                        try:
+                            with output_file.open("r", encoding = "utf-8") as f:
+                                loaded_results = json.load(f)
+                            if isinstance(loaded_results, dict):
+                                results = loaded_results
+                            else:
+                                print(f"      Existing result file {output_file.name} is invalid; recomputing.")
+                        except Exception as e:
+                            print(f"      Failed to read existing {output_file.name}: {e}; recomputing.")
                     print(f"    Dataset: {dataset_name}")
 
                     for split_dir in sorted(path for path in dataset_dir.iterdir() if path.is_dir()):
@@ -244,6 +262,8 @@ class EvaluateModel:
                             continue
 
                         split_results = {}
+                        if self.skip_existing and split_name in results and isinstance(results[split_name], dict):
+                            split_results = dict(results[split_name])
 
                         for train_file in train_files:
                             if not train_file.stem.startswith("train_"):
@@ -253,6 +273,9 @@ class EvaluateModel:
                             idx = train_file.stem.removeprefix("train_")
                             if not idx:
                                 print(f"      Skip file {train_file.name}: missing run identifier")
+                                continue
+                            if self.skip_existing and idx in split_results:
+                                print(f"      Skip run {idx}: existing result found")
                                 continue
 
                             test_file = split_dir / f"test_{idx}.parquet"
@@ -297,7 +320,6 @@ class EvaluateModel:
                                     [ X_test_scaled.reset_index(drop = True), y_test_scaled.reset_index(drop = True) ],
                                     axis = 1
                                 )
-
                                 model = model_class(
                                     scaled_train,
                                     scaled_test,
@@ -307,7 +329,6 @@ class EvaluateModel:
                                 model.fit()
                                 y_pred = np.asarray(model.predict(), dtype = float).ravel()
                                 y_true = y_test_scaled.to_numpy(dtype = float, copy = False)
-
                                 if y_pred.shape[0] != y_true.shape[0]:
                                     raise ValueError(
                                         f"Prediction length mismatch: y_pred={y_pred.shape[0]}, y_true={y_true.shape[0]}"
@@ -317,6 +338,7 @@ class EvaluateModel:
                                     "MSE": evaluator.score_MSE(),
                                     "RMSE": evaluator.score_RMSE(),
                                     "MAE": evaluator.score_MAE(),
+                                    "maximal_AE": evaluator.score_maximal_AE(),
                                     "Adjusted R2 score": evaluator.score_r2(
                                         use_adjusted = True,
                                         num_feat = model.X_train.shape[1],
@@ -334,7 +356,6 @@ class EvaluateModel:
                         if split_results:
                             results[split_name] = split_results
 
-                    output_file = model_output_dir / f"{dataset_name}.json"
                     with output_file.open("w", encoding = "utf-8") as f:
                         json.dump(results, f, indent = 2, default = _sanitize)
 
