@@ -211,10 +211,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _reverse_single_hyperball(self):
@@ -243,10 +240,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # This is to compare different ways of choosing train and test sets (Additional experiment)
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _multiple_hyperballs(self):
@@ -298,10 +292,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _reverse_multiple_hyperballs(self):
@@ -346,10 +337,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # This is to compare different ways of choosing train and test sets (Additional experiment)
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _single_slab(self):
@@ -386,10 +374,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_train = pd.concat([X_train, y_train], axis = 1)
             df_test = pd.concat([X_test, y_test], axis = 1)
 
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _reverse_single_slab(self):
@@ -423,10 +408,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # This is to compare different ways of choosing train and test sets (Additional experiment)
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _semi_infinite_slab(self):
@@ -468,10 +450,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _reverse_semi_infinite_slab(self):
@@ -509,10 +488,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # This is to compare different ways of choosing train and test sets (Additional experiment)
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _kmeans_hyperballs(self):
@@ -563,10 +539,7 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
     def _reverse_kmeans_hyperballs(self):
@@ -613,14 +586,11 @@ class BasicGeometricSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
-    def split(self, file_name = None, df = None, test_size = None, include_reverse = False):
-        super().split(file_name, df, test_size)
+    def split(self, file_name = None, df = None, test_size = None, include_reverse = True, add_noise_to_train = False):
+        super().split(file_name, df, test_size, add_noise_to_train = add_noise_to_train)
         self.X = self.df.iloc[:, :-1]
         self.y = self.df.iloc[:, -1]
         self.test_size = test_size

@@ -41,13 +41,10 @@ class RandomSplit(BaseSplitter):
             df_test = pd.concat([X_test, y_test], axis = 1)
 
             # Save files using the idx
-            path = os.path.join(output_dir, f"train_{idx}.parquet")
-            df_train.to_parquet(path, index = False)
-            path = os.path.join(output_dir, f"test_{idx}.parquet")
-            df_test.to_parquet(path, index = False)
+            self.save_data(df_train, df_test, output_dir, idx)
 
 
-    def split(self, file_name = None, df = None, test_size = None):
-        super().split(file_name, df, test_size)
+    def split(self, file_name = None, df = None, test_size = None, add_noise_to_train = False):
+        super().split(file_name, df, test_size, add_noise_to_train = add_noise_to_train)
 
         self._random_split()
