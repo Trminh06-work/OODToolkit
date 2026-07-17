@@ -1,0 +1,65 @@
+{
+  "variants": {
+    "baseline": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "baseline"
+      }
+    },
+    "baseline_mon": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "baseline_mon",
+        "mon": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    },
+    "baseline_mix": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "baseline_mix",
+        "mon": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    },
+    "local": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "local"
+      }
+    },
+    "local_mon": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "local_mon",
+        "mon": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    },
+    "local_mix": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "local_mix",
+        "mon": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    },
+    "smooth": {
+      "runtime_config": {
+        "seed": 42
+      },
+      "model_params": {
+        "type": "smooth",
+        "mon": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      }
+    }
+  }
+}
