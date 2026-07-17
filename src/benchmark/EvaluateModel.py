@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import time
 import os
 import pandas as pd
 import numpy as np
@@ -13,7 +13,16 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, m
 
 from sklearn.preprocessing import StandardScaler
 
+import torch
+
 from models import BaseModel, ModelConfig
+
+
+def _sync():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    if torch.backends.mps.is_available():
+        torch.mps.synchronize()
 
 import logging
 
@@ -51,6 +60,11 @@ class Evaluator:
         return mae
 
 
+    def score_MaxAE(self):
+        abs_errors = abs(self.y_true - self.y_pred)
+        return max(abs_errors)
+
+
     def score_r2(self, use_adjusted = False, num_feat = None):
         r2 = r2_score(self.y_true, self.y_pred)
         if use_adjusted:
@@ -78,20 +92,22 @@ class Evaluator:
 
         return sMAPE
 
-
-    def score_nRMSE(self):
-        rmse = self.score_RMSE()
-        return rmse / self.y_true.std()
-
-
-    def score_nMAE(self):
-        mae = self.score_MAE()
-        return mae / self.y_true.std()
+    # This normalizes the score using the std of test ground truths
+    # Expected to use the std of train ground truths
+    # def score_nRMSE(self):
+    #     rmse = self.score_RMSE()
+    #     return rmse / self.y_true.std()
 
 
-    def score_maximal_AE(self):
-        abs_errors = abs(self.y_true - self.y_pred)
-        return max(abs_errors)
+    # def score_nMAE(self):
+    #     mae = self.score_MAE()
+    #     return mae / self.y_true.std()
+
+
+    # def score_nMaxAE(self):
+    #     abs_errors = abs(self.y_true - self.y_pred)
+    #     MaxAE = max(abs_errors)
+    #     return MaxAE / self.y_true.std()
 
 
 
@@ -302,43 +318,45 @@ class EvaluateModel:
                                     columns = X_test.columns,
                                 )
 
-                                y_scaler = StandardScaler()
-                                y_train_scaled = pd.Series(
-                                    y_scaler.fit_transform(y_train.to_numpy().reshape(-1, 1)).ravel(),
-                                    name = y_train.name,
-                                )
-                                y_test_scaled = pd.Series(
-                                    y_scaler.transform(y_test.to_numpy().reshape(-1, 1)).ravel(),
-                                    name = y_test.name,
-                                )
-
                                 scaled_train = pd.concat(
-                                    [ X_train_scaled.reset_index(drop = True), y_train_scaled.reset_index(drop = True) ],
+                                    [ X_train_scaled.reset_index(drop = True), y_train.reset_index(drop = True) ],
                                     axis = 1
                                 )
                                 scaled_test = pd.concat(
-                                    [ X_test_scaled.reset_index(drop = True), y_test_scaled.reset_index(drop = True) ],
+                                    [ X_test_scaled.reset_index(drop = True), y_test.reset_index(drop = True) ],
                                     axis = 1
                                 )
+
                                 model = model_class(
                                     scaled_train,
                                     scaled_test,
                                     config = variant_runtime_config,
                                     **variant_model_params,
                                 )
+
+                                _sync(); t0 = time.perf_counter()
                                 model.fit()
-                                y_pred = np.asarray(model.predict(), dtype = float).ravel()
-                                y_true = y_test_scaled.to_numpy(dtype = float, copy = False)
+                                _sync(); t1 = time.perf_counter()
+                                raw_pred = model.predict()
+                                _sync(); t2 = time.perf_counter()
+
+                                y_pred = np.asarray(raw_pred, dtype = float).ravel()
+                                y_true = y_test.to_numpy(dtype = float, copy = False)
                                 if y_pred.shape[0] != y_true.shape[0]:
                                     raise ValueError(
                                         f"Prediction length mismatch: y_pred={y_pred.shape[0]}, y_true={y_true.shape[0]}"
                                     )
                                 evaluator = Evaluator(y_pred, y_true)
                                 split_results[idx] = {
+                                    "training_time": t1 - t0,
+                                    "inference_time": t2 - t1,
                                     "MSE": evaluator.score_MSE(),
                                     "RMSE": evaluator.score_RMSE(),
+                                    "nRMSE": evaluator.score_RMSE() / y_train.std(),
                                     "MAE": evaluator.score_MAE(),
-                                    "maximal_AE": evaluator.score_maximal_AE(),
+                                    "nMAE": evaluator.score_MAE() / y_train.std(),
+                                    "MaxAE": evaluator.score_MaxAE(),
+                                    "nMaxAE": evaluator.score_MaxAE() / y_train.std(),
                                     "Adjusted R2 score": evaluator.score_r2(
                                         use_adjusted = True,
                                         num_feat = model.X_train.shape[1],

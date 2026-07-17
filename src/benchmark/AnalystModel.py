@@ -65,11 +65,15 @@ class AnalystModel:
         agg_method: str = "median",   # or mean (less robust)
         results_root: str = "Results",
         split_data_root: str = "../data/splitted",
+        key_metric: str = "RMSE" # /"nRMSE" or "MAE"/"nMAE" or "MaxAE"/"nMaxAE",
     ):
+        if key_metric not in ["RMSE", "nRMSE", "MAE", "nMAE", "MaxAE", "nMaxAE"]:
+            raise ValueError('key_metric must be "RMSE", "nRMSE", "MAE", "nMAE", "MaxAE", or "nMaxAE"')
         self.alpha = alpha            # significance level
         self.agg_method = agg_method
         self.results_root = Path(results_root)
         self.split_data_root = Path(split_data_root)
+        self.key_metric = key_metric
 
 
     def _resolve_results_root(self, dir_path = None):
@@ -180,12 +184,11 @@ class AnalystModel:
             raise ValueError("agg_method must be 'median' or 'mean'")
 
 
-    def compute_ds_std(self, train_file):
-        df_train = pd.read_parquet(train_file)
-
-        target = df_train.iloc[:, -1]
-        return float(np.std(target, ddof = 0) + 0.0001) # avoid division by zero
-
+    def _sort_splits(self, splits, random_split_name: str = "Random_Split"):
+        splits = list(splits)
+        head = [s for s in splits if s == random_split_name]
+        tail = sorted(s for s in splits if s != random_split_name)
+        return head + tail
 
     # ---------- helpers ----------
     def adaptive_format(self, x):
@@ -198,161 +201,6 @@ class AnalystModel:
             return f"{x:.1f}".rstrip("0").rstrip(".")
         else:
             return f"{int(round(x))}"
-
-
-    def colorize_cell(self, cell_txt: str, is_row_best: bool, is_col_best: bool) -> str:
-        if cell_txt == "--":
-            return cell_txt
-        if is_row_best and is_col_best:
-            return f"\\textcolor{{green}}{{{cell_txt}}}"
-        elif is_row_best:
-            return f"\\textcolor{{blue}}{{{cell_txt}}}"
-        elif is_col_best:
-            return f"\\textcolor{{red}}{{{cell_txt}}}"
-        else:
-            return cell_txt
-
-
-    def build_wide_numeric(self, metric: str, data_loader: DataSaver, save_dir: Path, model_label: str) -> pd.DataFrame:
-        records = []
-        dataset_names = self._list_dataset_names(save_dir)
-        split_types = self._list_split_types(save_dir, dataset_names)
-
-        for ds_name in dataset_names:
-            file_name = save_dir / f"{ds_name}.json"
-            if not file_name.exists():
-                continue
-
-            res_dict = data_loader.read_json(file_name)
-            split_scores = self.split_score_by_dict(res_dict, metric, ds_name)
-
-            for split_type, score in split_scores.items():
-                # keep your sMAPE scaling convention
-                if metric == "sMAPE" and score is not None:
-                    score = score / 100.0
-                records.append({"dataset": ds_name, "split": split_type, "score": score})
-
-        long_df = pd.DataFrame(records)
-        if long_df.empty:
-            raise ValueError(f"No data loaded for model={model_label}, metric={metric}.")
-
-        wide = long_df.pivot_table(
-            index = "dataset",
-            columns = "split",
-            values = "score",
-            aggfunc = "first"
-        ).reindex(index = dataset_names, columns = split_types)
-
-        return wide
-
-
-    def performance_table(self, model_name, variant_name: str = None):
-        result_dir = self._resolve_variant_dir(model_name, variant_name)
-        model_label = model_name if variant_name is None and result_dir.name == model_name else f"{model_name}/{result_dir.name}"
-        data_loader = DataSaver(model_name, self.results_root)
-
-        # ---------- numeric tables ----------
-        rmse_num = self.build_wide_numeric("RMSE", data_loader, result_dir, model_label)
-        mae_num  = self.build_wide_numeric("MAE", data_loader, result_dir, model_label)
-        smape_num = self.build_wide_numeric("sMAPE", data_loader, result_dir, model_label)
-
-        # ---------- RMSE-based minima for coloring ----------
-        rmse_row_min = rmse_num.min(axis = 1, skipna = True)
-        global_best_rmse = rmse_num.min(axis = 1, skipna = True).min()
-
-        # ---------- generate LaTeX rows: each cell = nRMSE / nMAE / sMAPE, colored ONLY by RMSE ----------
-        latex_rows = []
-        for i, ds in enumerate(rmse_num.index):
-            row_cells = [f"\\#{i+1}\n"]
-
-            for split in rmse_num.columns:
-                r = rmse_num.loc[ds, split]
-                m = mae_num.loc[ds, split]
-                s = smape_num.loc[ds, split]
-
-                # If any metric missing, show "-- / -- / --" (still color by RMSE if RMSE exists)
-                r_txt = self.adaptive_format(r)
-                m_txt = self.adaptive_format(m)
-                s_txt = self.adaptive_format(s)
-
-                cell_plain = f"{r_txt} / {m_txt} / {s_txt}"
-
-                # highlight the best split within each dataset; mark the single global best separately
-                is_row_best = (r_txt != "--") and (r == rmse_row_min.loc[ds])
-                is_col_best = (r_txt != "--") and (r == global_best_rmse)
-
-                cell_colored = self.colorize_cell(cell_plain, is_row_best, is_col_best)
-
-                row_cells.append(f"${cell_colored}$")
-
-            latex_rows.append(" & ".join(row_cells) + " \\\\")
-        print("\n\n".join(latex_rows))
-
-
-    def side_exp_performance_table(
-        self,
-        model_name,
-        baseline_variant: str = "baseline",
-        compare_variant: str = None,
-    ):
-        if compare_variant is None:
-            raise ValueError("compare_variant must be provided")
-
-        data_loader = DataSaver(model_name, self.results_root)
-        base_dir = self._resolve_variant_dir(model_name, baseline_variant)
-        compare_dir = self._resolve_variant_dir(model_name, compare_variant)
-
-        base_rmse_num = self.build_wide_numeric("RMSE", data_loader, base_dir, f"{model_name}/{base_dir.name}")
-        rmse_num = self.build_wide_numeric("RMSE", data_loader, compare_dir, f"{model_name}/{compare_dir.name}")
-        mae_num  = self.build_wide_numeric("MAE", data_loader, compare_dir, f"{model_name}/{compare_dir.name}")
-        smape_num = self.build_wide_numeric("sMAPE", data_loader, compare_dir, f"{model_name}/{compare_dir.name}")
-
-        common_datasets = rmse_num.index.intersection(base_rmse_num.index)
-        common_splits = rmse_num.columns.intersection(base_rmse_num.columns)
-        if len(common_datasets) == 0 or len(common_splits) == 0:
-            raise ValueError(
-                f"No common dataset/split coverage between {model_name}/{base_dir.name} and {model_name}/{compare_dir.name}"
-            )
-
-        base_rmse_num = base_rmse_num.loc[common_datasets, common_splits]
-        rmse_num = rmse_num.loc[common_datasets, common_splits]
-        mae_num = mae_num.loc[common_datasets, common_splits]
-        smape_num = smape_num.loc[common_datasets, common_splits]
-
-        latex_rows = []
-        for i, ds in enumerate(rmse_num.index):
-            row_cells = [f"\\#{i+1}\n"]
-
-            for split in rmse_num.columns:
-                r = rmse_num.loc[ds, split]
-                base_r = base_rmse_num.loc[ds, split]
-                m = mae_num.loc[ds, split]
-                s = smape_num.loc[ds, split]
-
-                r_txt = self.adaptive_format(r)
-                m_txt = self.adaptive_format(m)
-                s_txt = self.adaptive_format(s)
-
-                if pd.isna(base_r) or base_r == 0:
-                    diff_txt = "NA"
-                    diff_value = None
-                else:
-                    diff_value = ((r - base_r) / base_r) * 100
-                    diff_txt = f"{diff_value:.1f}\\%"
-
-                cell_plain = f"{r_txt} / {m_txt} / {s_txt} ({diff_txt})"
-
-                if diff_value is None or diff_value == 0:
-                    cell_colored = f"\\textcolor{{black}}{{{cell_plain}}}"
-                elif diff_value < 0:
-                    cell_colored = f"\\textcolor{{ForestGreen}}{{{cell_plain}}}"
-                else:
-                    cell_colored = f"\\textcolor{{BrickRed}}{{{cell_plain}}}"
-
-                row_cells.append(f"${cell_colored}$")
-
-            latex_rows.append(" & ".join(row_cells) + " \\\\")
-        print("\n\n".join(latex_rows))
 
 
     def split_score_by_dict(self, dict, metric, ds_name):
@@ -368,12 +216,7 @@ class AnalystModel:
             vals = []
             for run_idx, metrics_dict in runs.items():
                 if metric in metrics_dict and metrics_dict[metric] is not None:
-                    train_file = self.split_data_root / ds_name / split_type / f"train_{run_idx}.parquet"
-                    ds_std = self.compute_ds_std(train_file)
-                    if metric not in ["RMSE", "MAE"]:
-                        ds_std = 1
-
-                    vals.append(float(metrics_dict[metric] / ds_std))
+                    vals.append(float(metrics_dict[metric]))
             if vals:
                 out[split_type] = self.aggregate(vals)
         return out
@@ -382,12 +225,21 @@ class AnalystModel:
     def construct_full_stats_table(
         self,
         dir_path = None,
-        metric = "RMSE", # or "MAE", None -> ds_std = 1
+        metric = "RMSE", # /"nRMSE" or "MAE"/"nMAE" or "MaxAE"/"nMaxAE",
         baseline_only: bool = False,
         include_variants: bool = True,
+        dataset_names = None,
     ):
         records = []
         results_root = self._resolve_results_root(dir_path)
+        model_entries = []
+        dataset_filter = None
+        requested_dataset_set = None
+        if dataset_names is not None:
+            dataset_filter = list(dict.fromkeys(dataset_names))
+            if not dataset_filter:
+                raise ValueError("dataset_names must not be empty when provided.")
+            requested_dataset_set = set(dataset_filter)
 
         for model_label in self._list_model_labels(
             dir_path = results_root,
@@ -397,9 +249,41 @@ class AnalystModel:
             model_name, variant_name = self._parse_model_label(model_label)
             data_loader = DataSaver(model_name, results_root)
             save_dir = self._resolve_variant_dir(model_name, variant_name, dir_path = results_root)
+            available_dataset_names = self._list_dataset_names(save_dir)
 
-            for ds_name in self._list_dataset_names(save_dir):
+            if requested_dataset_set is None:
+                selected_dataset_names = available_dataset_names
+            else:
+                available_dataset_set = set(available_dataset_names)
+                selected_dataset_names = [
+                    ds_name for ds_name in dataset_filter
+                    if ds_name in available_dataset_set
+                ]
+
+            if not selected_dataset_names:
+                if requested_dataset_set is None:
+                    logging.warning(
+                        "Skipping model '%s' because no dataset result files were found in %s",
+                        model_label,
+                        save_dir,
+                    )
+                else:
+                    logging.warning(
+                        "Skipping model '%s' because none of the requested datasets were found in %s: %s",
+                        model_label,
+                        save_dir,
+                        dataset_filter,
+                    )
+                continue
+
+            model_entries.append((model_label, data_loader, save_dir, selected_dataset_names))
+
+        for model_label, data_loader, save_dir, selected_dataset_names in model_entries:
+            for ds_name in selected_dataset_names:
                 file_name = save_dir / f"{ds_name}.json"
+                if not file_name.exists():
+                    continue
+
                 res_dict = data_loader.read_json(file_name)
                 split_scores = self.split_score_by_dict(res_dict, metric, ds_name)
 
@@ -413,10 +297,15 @@ class AnalystModel:
 
         long_df = pd.DataFrame(records)
         if long_df.empty:
-            raise ValueError("No data loaded. Check ROOT, folder structure, and PRIMARY_METRIC.")
+            if requested_dataset_set is None:
+                raise ValueError("No data loaded. Check ROOT, folder structure, and PRIMARY_METRIC.")
+            else:
+                raise ValueError(
+                    "No data loaded for the requested datasets. "
+                    f"Requested datasets: {dataset_filter}"
+                )
 
         return long_df
-
 
     def construct_split_agnostic_table(self, long_df: pd.DataFrame):
         """
@@ -457,6 +346,25 @@ class AnalystModel:
         return wide
 
 
+    def construct_dataset_wise_table(self, long_df: pd.DataFrame, dataset_name: str):
+        """
+        Build a per-dataset table where rows are models and columns are split regimes.
+        """
+        available_datasets = sorted(long_df["dataset"].unique())
+        if dataset_name not in available_datasets:
+            raise ValueError(f"{dataset_name} does not exist. The values must be {available_datasets}")
+
+        sub = long_df[long_df["dataset"] == dataset_name]
+        wide = sub.pivot_table(index = "model", columns = "split", values = "score", aggfunc = "first")
+
+        # Keep only model rows where all split regimes exist (paired comparison within this dataset).
+        wide = wide.dropna(axis = 0, how = "any")
+
+        if wide.empty:
+            raise ValueError(f"No complete splits for dataset={dataset_name} across all models.")
+        return wide
+
+
     def construct_model_wise_table(self, long_df: pd.DataFrame, model_label: str):
         """
         This framework evaluates a single model across splitting strategies.
@@ -485,18 +393,24 @@ class AnalystModel:
         return wide
 
 
+    # Not the core test -> use to perform granular dianosistic
     def construct_model_wise_vs_random_table(
         self,
         long_df: pd.DataFrame,
         model_label: str,
         baseline_split: str = "Random_Split",
+        use_relative: bool = True,
+        eps: float = 1e-12,
     ):
         """
         Build a model-wise table where each split is compared to a baseline split.
 
-        Returns a wide table indexed by (model, dataset), with columns as non-baseline
-        split regimes and values computed as:
-            score(split) - score(baseline_split)
+        Returns a wide table indexed by dataset, with columns as non-baseline
+        split regimes and values computed as either:
+            score(split) - score(baseline_split), if use_relative=False
+        or
+            (score(split) - score(baseline_split)) / (score(baseline_split) + eps),
+            if use_relative=True.
 
         Positive values mean the split is worse than baseline (for error metrics),
         and negative values mean better than baseline.
@@ -514,7 +428,7 @@ class AnalystModel:
             )
 
         wide = sub.pivot_table(
-            index = ["model", "dataset"],
+            index = ["dataset"],
             columns = "split",
             values = "score",
             aggfunc = "first",
@@ -531,32 +445,70 @@ class AnalystModel:
 
         if wide.empty:
             raise ValueError(
-                f"No complete (model, dataset) blocks for model={model_label} across all splits "
+                f"No complete dataset blocks for model={model_label} across all splits "
                 f"including baseline={baseline_split}."
             )
 
         baseline_vals = wide[baseline_split]
         compared = wide[compare_splits].sub(baseline_vals, axis = 0)
+        if use_relative:
+            compared = compared.div(baseline_vals + eps, axis = 0)
         return compared
 
 
-    def holm_adjust(self, pvals):
+    def construct_model_robustness_table(
+        self,
+        long_df: pd.DataFrame,
+        model_label: str,
+        baseline_split: str = "Random_Split",
+        eps: float = 1e-12,
+    ):
         """
-        Holm-Bonferroni adjusted p-values (step-down), returns adjusted p-values.
+        Returns:
+            - relative degradation table (Δ_rel)
+            - worst-case degradation per dataset
+            - robustness score per model
         """
-        pvals = np.array(pvals, dtype=float)
-        m = len(pvals)
-        order = np.argsort(pvals)
-        adj = np.empty(m, dtype=float)
-        running_max = 0.0
-        for k, idx in enumerate(order):
-            val = (m - k) * pvals[idx]
-            running_max = max(running_max, val)
-            adj[idx] = min(running_max, 1.0)
-        return adj.tolist()
+
+        available_models = sorted(long_df["model"].unique())
+        if model_label not in available_models:
+            raise ValueError(f"{model_label} not found. Available: {available_models}")
+
+        sub = long_df[long_df["model"] == model_label]
+
+        wide = sub.pivot_table(
+            index=["dataset"],
+            columns="split",
+            values="score",
+            aggfunc="first",
+        )
+
+        # keep only complete rows
+        wide = wide.dropna(axis=0, how="any")
+
+        if baseline_split not in wide.columns:
+            raise ValueError(f"{baseline_split} not found in splits")
+
+        baseline = wide[baseline_split]
+
+        compare_splits = [s for s in wide.columns if s != baseline_split]
+
+        # --- FIX 1: relative degradation ---
+        # epsilon keeps the denominator non-zero in degenerate cases.
+        delta_rel = wide[compare_splits].sub(baseline, axis=0).div(baseline + eps, axis=0)
+
+        # --- FIX 2: worst-case per dataset ---
+        worst_case = delta_rel.max(axis=1)
+
+        # --- FIX 3: robustness score ---
+        robustness_score = delta_rel.max(axis = 1).mean()   # average worst-case per dataset
+
+        return delta_rel, worst_case, robustness_score
 
 
-    # Hypothesis Testing Framework - Friedman's test
+    # ---------------------------------------------------------------------------------------------
+    # Hypothesis Testing Framework - Friedman's test and Post-hoc Analysis
+    # ---------------------------------------------------------------------------------------------
     def friedman_on_wide(self, wide: pd.DataFrame):
         arrays = [wide[c].to_numpy(dtype=float) for c in wide.columns]
         return friedmanchisquare(*arrays)
@@ -596,46 +548,20 @@ class AnalystModel:
         return post
 
 
-    def split_agnostic_test(self, long_df: pd.DataFrame = None):
+    def holm_adjust(self, pvals):
         """
-        This framework disregards the splitting strategies, exclude Random Split due to iid behaviour, for each dataset
-
-        Null hypothesis: All models perform equally
-        Alt hypothesis : At least 1 model performs significantly different
+        Holm-Bonferroni adjusted p-values (step-down), returns adjusted p-values.
         """
-        if long_df is None:
-            long_df = self.construct_full_stats_table(metric = "RMSE", baseline_only = True)
-
-        # Exclude Random_Split rows
-        long_df = long_df[long_df["split"] != "Random_Split"].copy()
-
-        wide = self.construct_split_agnostic_table(long_df)
-
-        chi2, p_friedman = self.friedman_on_wide(wide)
-        print(f"Friedman chi2 = {chi2:.4f}, p={p_friedman:.6g}")
-
-        # Find the best candidate by mean rank
-        mean_ranks = self.compute_mean_ranks(wide)
-        best = mean_ranks.index[0]
-        print("Mean ranks (lower is better):")
-        print(mean_ranks)
-
-        # Post-hoc Holm-corrected Wilcoxon vs best
-        # H0: median(X_best - X_others) = 0
-        # HA: X_best < X_others
-        if p_friedman < self.alpha:
-            posthoc = self.posthoc_vs_best(wide, best)
-            print("\nPost-hoc (Holm-corrected Wilcoxon vs best):")
-            print(posthoc.to_string(index=False))
-
-            top_group = [best] + posthoc.loc[posthoc["p_holm"] >= self.alpha, "compare_to"].tolist()
-
-            if len(top_group) == 1:
-                print(f"\n✅ Best overall model (split-agnostic): {best}")
-            else:
-                print(f"\n⚠️ No single winner. Top group (ties with {best}): {top_group}")
-        else:
-            print(f"\n⚠️ Friedman not significant (p≥{self.alpha})")
+        pvals = np.array(pvals, dtype=float)
+        m = len(pvals)
+        order = np.argsort(pvals)
+        adj = np.empty(m, dtype=float)
+        running_max = 0.0
+        for k, idx in enumerate(order):
+            val = (m - k) * pvals[idx]
+            running_max = max(running_max, val)
+            adj[idx] = min(running_max, 1.0)
+        return adj.tolist()
 
 
     # ---------------------------------------------------------------------------------------------
@@ -665,6 +591,30 @@ class AnalystModel:
         if val > 0:
             return rf"\textcolor{{red}}{{{txt}}}"
         return txt
+
+
+    def _fmt_nrmse_latex(self, val: float) -> str:
+        if pd.isna(val):
+            return "--"
+        return self.adaptive_format(float(val))
+
+
+    def print_nrmse_table_latex(self, wide: pd.DataFrame, row_header: str) -> None:
+        """
+        Print a full numeric table as LaTeX rows.
+        """
+        header_cells = [row_header] + [str(col).replace("_", r"\_") for col in wide.columns]
+        print(" & ".join(header_cells) + r" \\")
+        print()
+
+        for idx, row in wide.iterrows():
+            row_name = str(idx).replace("_", r"\_")
+            value_cells = []
+            for val in row.tolist():
+                txt = self._fmt_nrmse_latex(val)
+                value_cells.append("--" if txt == "--" else f"${txt}$")
+            print(" & ".join([row_name] + value_cells) + r" \\")
+            print()
 
 
     def print_splitwise_meanrank_latex(self, latex_buffer: dict, split_types) -> None:
@@ -723,17 +673,69 @@ class AnalystModel:
             print()
 
 
+    # ---------------------------------------------------------------------------------------------
+    # Hypothesis Tests
+    # ---------------------------------------------------------------------------------------------
+
+    def split_agnostic_test(self, long_df: pd.DataFrame = None, dataset_names = None):
+        """
+        This framework disregards the splitting strategies, exclude Random Split due to iid behaviour, for each dataset
+
+        Null hypothesis: All models perform equally
+        Alt hypothesis : At least 1 model performs significantly different
+        """
+        if long_df is None:
+            long_df = self.construct_full_stats_table(
+                metric = self.key_metric,
+                # baseline_only = True,
+                dataset_names = dataset_names,
+            )
+
+        # Exclude Random_Split rows
+        long_df = long_df[long_df["split"] != "Random_Split"].copy()
+
+        wide = self.construct_split_agnostic_table(long_df)
+
+        chi2, p_friedman = self.friedman_on_wide(wide)
+        print(f"Friedman chi2 = {chi2:.4f}, p={p_friedman:.6g}")
+
+        # Find the best candidate by mean rank
+        mean_ranks = self.compute_mean_ranks(wide)
+        best = mean_ranks.index[0]
+        print("Mean ranks (lower is better):")
+        print(mean_ranks)
+
+        # Post-hoc Holm-corrected Wilcoxon vs best
+        # H0: median(X_best - X_others) = 0
+        # HA: X_best < X_others
+        if p_friedman < self.alpha:
+            posthoc = self.posthoc_vs_best(wide, best)
+            print("\nPost-hoc (Holm-corrected Wilcoxon vs best):")
+            print(posthoc.to_string(index=False))
+
+            top_group = [best] + posthoc.loc[posthoc["p_holm"] >= self.alpha, "compare_to"].tolist()
+
+            if len(top_group) == 1:
+                print(f"\n✅ Best overall model (split-agnostic): {best}")
+            else:
+                print(f"\n⚠️ No single winner. Top group (ties with {best}): {top_group}")
+        else:
+            print(f"\n⚠️ Friedman not significant (p≥{self.alpha})")
+
+
     def split_wise_test(
         self,
         long_df: pd.DataFrame = None,
         baseline_only: bool = True,
         include_variants: bool = False,
+        dataset_names = None,
     ):
         if long_df is None:
             long_df = self.construct_full_stats_table(
-                metric = "RMSE",
+                metric = self.key_metric,
                 baseline_only = baseline_only,
                 include_variants = include_variants,
+                dataset_names = dataset_names,
             )
 
         summary_rows = []
@@ -741,7 +743,7 @@ class AnalystModel:
         # buffer to build LaTeX rows at the end
         latex_buffer = {}  # {model: {split_type: (mean_rank, tag)}}
 
-        split_types = sorted(long_df["split"].unique())
+        split_types = self._sort_splits(long_df["split"].unique())
 
         for split_type in split_types:
             print("\n" + "=" * 90)
@@ -819,17 +821,70 @@ class AnalystModel:
         self.print_splitwise_meanrank_latex(latex_buffer, split_types)
 
 
+    def per_dataset_table_test(
+        self,
+        long_df: pd.DataFrame = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        print_latex: bool = True,
+        dataset_names = None,
+    ):
+        """
+        Print one full 2D nRMSE table per dataset.
+        Table orientation: rows=models, columns=splits.
+        """
+        if long_df is None:
+            long_df = self.construct_full_stats_table(
+                metric = self.key_metric,
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+                dataset_names = dataset_names,
+            )
+
+        summary_rows = []
+        dataset_names = sorted(long_df["dataset"].unique())
+
+        for dataset_name in dataset_names:
+            print("\n" + "=" * 90)
+            print(f"DATASET: {dataset_name}")
+
+            wide = self.construct_dataset_wise_table(long_df, dataset_name)
+            wide = wide.reindex(index = sorted(wide.index), columns = self._sort_splits(wide.columns))
+
+            print(f"Models (complete): {wide.shape[0]} | Splits: {wide.shape[1]}")
+            print(f"\nRaw {self.key_metric} table (rows=models, cols=splits):")
+            print(wide.to_string())
+
+            if print_latex:
+                print("\n" + "#" * 90)
+                print(f"LATEX ROWS (dataset={dataset_name}; rows=models, cols=splits)\n")
+                self.print_nrmse_table_latex(wide, row_header = "Model")
+
+            summary_rows.append({
+                "dataset": dataset_name,
+                "models": wide.shape[0],
+                "splits": wide.shape[1],
+            })
+
+        summary = pd.DataFrame(summary_rows)
+        print("\n" + "#" * 90)
+        print("PER-DATASET TABLE SUMMARY")
+        print(summary.to_string(index=False))
+
+
     def model_wise_test(
         self,
         long_df: pd.DataFrame = None,
         baseline_only: bool = True,
         include_variants: bool = False,
+        dataset_names = None,
     ):
         if long_df is None:
             long_df = self.construct_full_stats_table(
-                metric = "RMSE",
+                metric = self.key_metric,
                 baseline_only = baseline_only,
                 include_variants = include_variants,
+                dataset_names = dataset_names,
             )
 
         summary_rows = []
@@ -905,7 +960,7 @@ class AnalystModel:
         print("MODEL-WISE SUMMARY")
         print(summary.to_string(index=False))
 
-        split_types = sorted(split_types_seen)
+        split_types = self._sort_splits(split_types_seen)
 
         print("The split types are:")
         for split in split_types:
@@ -916,25 +971,138 @@ class AnalystModel:
         self.print_splitwise_meanrank_latex(latex_buffer_by_model, split_types)
 
 
+    def robustness_model_comparison_latex(
+        self,
+        long_df: pd.DataFrame = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        baseline_split: str = "Random_Split",
+        dataset_names = None,
+    ):
+        """
+        Robustness comparison across models with LaTeX output.
+        Uses relative degradation Δ_rel = (S - R) / R
+        """
+        if long_df is None:
+            long_df = self.construct_full_stats_table(
+                metric = self.key_metric,
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+                dataset_names = dataset_names,
+            )
+
+        models = sorted(long_df["model"].unique())
+
+        model_tables = []
+        scores = {}
+
+        # ---------- compute Δ_rel ----------
+        for model in models:
+            delta_rel, _, score = self.construct_model_robustness_table(long_df, model)
+            scores[model] = score
+
+            tmp = delta_rel.copy()
+            tmp["model"] = model
+            model_tables.append(tmp)
+
+        combined = pd.concat(model_tables)
+
+        # reshape
+        melted = combined.reset_index().melt(
+            id_vars=["dataset", "model"],
+            var_name="split",
+            value_name="delta_rel"
+        )
+
+        wide = melted.pivot_table(
+            index=["dataset", "split"],
+            columns="model",
+            values="delta_rel",
+            aggfunc="first"
+        ).dropna()
+
+        if wide.empty:
+            raise ValueError("No complete paired blocks for robustness test.")
+
+        common_index = wide.index
+
+        scores = {}
+        for model in wide.columns:
+            vals = wide[model].loc[common_index]
+            scores[model] = float(vals.mean())
+
+        # ---------- Friedman ----------
+        arrays = [wide[c].values for c in wide.columns]
+        chi2, p = friedmanchisquare(*arrays)
+
+        # ---------- ranking ----------
+        ranks = wide.apply(
+            lambda row: pd.Series(rankdata(row.values, method="average"), index=wide.columns),
+            axis=1
+        )
+        mean_ranks = ranks.mean().sort_values()
+
+        best = mean_ranks.index[0]
+
+        # ---------- posthoc ----------
+        if p < self.alpha:
+            posthoc = self.posthoc_vs_best(wide, best)
+
+            # models NOT significantly worse than best
+            top_group = [best] + posthoc.loc[
+                posthoc["p_holm"] >= self.alpha, "compare_to"
+            ].tolist()
+        else:
+            # no significance → all tied
+            top_group = list(mean_ranks.index)
+
+        # ---------- LaTeX formatting ----------
+        latex_rows = []
+
+        for i, model in enumerate(mean_ranks.index):
+            rank_val = mean_ranks[model]
+            score_val = scores[model]
+
+            # formatting
+            rank_txt = f"{rank_val:.2f}"
+            score_txt = f"{score_val:.4f}"
+
+            if model == best:
+                rank_txt = f"\\textcolor{{red}}{{{rank_txt}}}"
+            elif model in top_group:
+                rank_txt = f"\\textcolor{{blue}}{{{rank_txt}}}"
+
+            row = f"{model} & ${rank_txt}$ & ${score_txt}$ \\\\"
+            latex_rows.append(row)
+
+        # ---------- print ----------
+        print("%% Robustness Model Comparison (LaTeX)")
+        print(f"%% Friedman chi2 = {chi2:.4f}, p = {p:.6g}")
+        print("\n".join(latex_rows))
+
+
+    # Not the core test -> use to perform granular dianosistic
     def model_wise_vs_random_latex_table(
         self,
         long_df: pd.DataFrame = None,
         baseline_only: bool = True,
         include_variants: bool = False,
         baseline_split: str = "Random_Split",
+        dataset_names = None,
     ):
         """
         Build model-wise split deltas versus Random_Split and print LaTeX rows.
 
         Each cell is:
-            aggregate_over_datasets(score(split) - score(baseline_split))
+            aggregate_over_datasets((score(split) - score(baseline_split)) / (score(baseline_split) + eps))
         where aggregate_over_datasets follows self.agg_method.
         """
         if long_df is None:
             long_df = self.construct_full_stats_table(
-                metric = "RMSE",
+                metric = self.key_metric,
                 baseline_only = baseline_only,
                 include_variants = include_variants,
+                dataset_names = dataset_names,
             )
 
         available_splits = sorted(long_df["split"].unique())
@@ -946,8 +1114,9 @@ class AnalystModel:
             raise ValueError(f"No non-baseline split regimes to compare against {baseline_split}.")
 
         model_labels = sorted(long_df["model"].unique())
-        latex_buffer = {}  # {model_label: {split_type: delta}}
+        latex_buffer = {}  # {model_label: {split_type: delta_rel}}
         summary_rows = []
+        eps = 1e-12
 
         for model_label in model_labels:
             print("\n" + "=" * 90)
@@ -957,6 +1126,8 @@ class AnalystModel:
                 long_df,
                 model_label,
                 baseline_split = baseline_split,
+                use_relative = True,
+                eps = eps,
             )
             print(f"Datasets (paired blocks): {wide_delta.shape[0]} | Compared splits: {wide_delta.shape[1]}")
 
@@ -965,7 +1136,10 @@ class AnalystModel:
                 axis = 0,
             ).sort_values()
 
-            print(f"\nAggregated delta vs {baseline_split} (split - baseline; lower is better):")
+            print(
+                f"\nAggregated relative delta vs {baseline_split} "
+                f"((split - baseline)/(baseline + {eps:.0e}); lower is better):"
+            )
             print(agg_delta)
 
             for split_type, delta in agg_delta.items():
@@ -977,7 +1151,7 @@ class AnalystModel:
                 "datasets_used": wide_delta.shape[0],
                 "splits_compared": wide_delta.shape[1],
                 "best_split_vs_random": agg_delta.index[0],
-                "best_delta": float(agg_delta.iloc[0]),
+                "best_delta_rel": float(agg_delta.iloc[0]),
             })
 
         summary = pd.DataFrame(summary_rows).sort_values("model")
@@ -990,5 +1164,224 @@ class AnalystModel:
             print(split, end = " | ")
 
         print("\n" + "#" * 90)
-        print(f"LATEX ROWS (delta vs {baseline_split}; green=better, red=worse)\n")
+        print(f"LATEX ROWS (delta_rel vs {baseline_split}; teal=better, red=worse)\n")
         self.print_modelwise_vs_random_latex(latex_buffer, model_labels, split_types)
+
+
+    # ---------------------------------------------------------------------------------------------
+    # Runtime Performance Framework - training/inference time comparison
+    # ---------------------------------------------------------------------------------------------
+    # Column label for the derived per-query inference time.
+    PER_QUERY_COL = "Inference (per query)"
+
+    def construct_runtime_long_table(
+        self,
+        dir_path = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        dataset_names = None,
+        time_metrics = ("training_time", "inference_time"),
+    ):
+        """
+        Build a per-run runtime table with one row per (dataset, split, model, run).
+
+        Unlike the error-metric tables, runs are NOT collapsed here: keeping the raw
+        per-run values (as stored in the result JSON) lets the summary report a mean
+        and a standard deviation. Returns a DataFrame with columns:
+        dataset, split, model, run, <time_metrics...>.
+        """
+        results_root = self._resolve_results_root(dir_path)
+
+        dataset_filter = None
+        if dataset_names is not None:
+            dataset_filter = list(dict.fromkeys(dataset_names))
+            if not dataset_filter:
+                raise ValueError("dataset_names must not be empty when provided.")
+        dataset_filter_set = set(dataset_filter) if dataset_filter is not None else None
+
+        records = []
+        for model_label in self._list_model_labels(
+            dir_path = results_root,
+            baseline_only = baseline_only,
+            include_variants = include_variants,
+        ):
+            model_name, variant_name = self._parse_model_label(model_label)
+            data_loader = DataSaver(model_name, results_root)
+            save_dir = self._resolve_variant_dir(model_name, variant_name, dir_path = results_root)
+            available_dataset_names = self._list_dataset_names(save_dir)
+
+            if dataset_filter_set is None:
+                selected_dataset_names = available_dataset_names
+            else:
+                available_dataset_set = set(available_dataset_names)
+                selected_dataset_names = [
+                    ds_name for ds_name in dataset_filter
+                    if ds_name in available_dataset_set
+                ]
+
+            for ds_name in selected_dataset_names:
+                file_name = save_dir / f"{ds_name}.json"
+                if not file_name.exists():
+                    continue
+
+                res_dict = data_loader.read_json(file_name)
+                for split_type, runs in res_dict.items():
+                    for run_idx, metrics_dict in runs.items():
+                        row = {
+                            "dataset": ds_name,
+                            "split": split_type,
+                            "model": model_label,
+                            "run": run_idx,
+                        }
+                        has_value = False
+                        for time_metric in time_metrics:
+                            val = metrics_dict.get(time_metric)
+                            if val is not None:
+                                row[time_metric] = float(val)
+                                has_value = True
+                        if has_value:
+                            records.append(row)
+
+        long_df = pd.DataFrame(records)
+        if long_df.empty:
+            raise ValueError(
+                "No runtime data loaded. Check results root, folder structure, and time_metrics."
+            )
+        return long_df
+
+
+    def construct_runtime_summary_table(
+        self,
+        runtime_long_df: pd.DataFrame = None,
+        time_metrics = ("training_time", "inference_time"),
+        n_samples: int = 30000,
+        per_query_metric: str = "inference_time",
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        dataset_names = None,
+    ):
+        """
+        Per-model runtime summary: rows = models, columns = metrics.
+
+        Runtime tables always aggregate the pooled per-run measurements with the
+        MEAN (independent of self.agg_method) and report the standard deviation.
+        A derived "Inference (per query)" column is added as per_query_metric divided
+        by n_samples (e.g. 30k samples in the current experiment).
+
+        Returns a DataFrame indexed by model with a column MultiIndex (metric, stat)
+        where stat is in {"mean", "std"}.
+        """
+        if runtime_long_df is None:
+            runtime_long_df = self.construct_runtime_long_table(
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+                dataset_names = dataset_names,
+                time_metrics = time_metrics,
+            )
+
+        metrics = list(time_metrics)
+        grouped = runtime_long_df.groupby("model")
+        mean_df = grouped[metrics].mean()
+        std_df = grouped[metrics].std(ddof = 1).fillna(0.0)
+
+        if n_samples and per_query_metric in metrics:
+            mean_df[self.PER_QUERY_COL] = mean_df[per_query_metric] / n_samples
+            std_df[self.PER_QUERY_COL] = std_df[per_query_metric] / n_samples
+            metrics = metrics + [self.PER_QUERY_COL]
+
+        summary = pd.concat({"mean": mean_df, "std": std_df}, axis = 1)
+        # Reorder to (metric, stat) with metrics in their logical order.
+        summary = summary.swaplevel(axis = 1)[metrics]
+        return summary
+
+
+    def _num_to_latex(self, val: float) -> str:
+        """Format a number to 4 sig figs, rendering 1.2e-07 as 1.2 \\times 10^{-7}."""
+        txt = f"{val:.4g}"
+        if "e" in txt.lower():
+            mantissa, exp = txt.lower().split("e")
+            return rf"{mantissa} \times 10^{{{int(exp)}}}"
+        return txt
+
+
+    def _fmt_runtime_latex(self, mean: float, std: float = None, is_best: bool = False) -> str:
+        """Format a runtime cell as 'mean ± std' for LaTeX; red marks the fastest model."""
+        if pd.isna(mean):
+            return "--"
+        mean_txt = self._num_to_latex(mean)
+        if is_best:
+            mean_txt = rf"\textcolor{{red}}{{{mean_txt}}}"
+        if std is None or pd.isna(std):
+            return mean_txt
+        return rf"{mean_txt} \pm {self._num_to_latex(std)}"
+
+
+    def runtime_comparison_latex(
+        self,
+        runtime_long_df: pd.DataFrame = None,
+        baseline_only: bool = True,
+        include_variants: bool = False,
+        dataset_names = None,
+        time_metrics = ("training_time", "inference_time"),
+        n_samples: int = 30000,
+        per_query_metric: str = "inference_time",
+        rank_by: str = "inference_time",
+    ):
+        """
+        Print a runtime comparison table (rows = models, cols = metrics) and the
+        matching LaTeX rows. Each cell is 'mean ± std' (mean aggregation), with the
+        fastest model per column in red. A derived "Inference (per query)" column
+        (per_query_metric / n_samples) is appended.
+        """
+        if rank_by not in time_metrics:
+            raise ValueError(f"rank_by must be one of {list(time_metrics)}")
+
+        if runtime_long_df is None:
+            runtime_long_df = self.construct_runtime_long_table(
+                baseline_only = baseline_only,
+                include_variants = include_variants,
+                dataset_names = dataset_names,
+                time_metrics = time_metrics,
+            )
+
+        summary = self.construct_runtime_summary_table(
+            runtime_long_df,
+            time_metrics = time_metrics,
+            n_samples = n_samples,
+            per_query_metric = per_query_metric,
+        )
+        summary = summary.sort_values((rank_by, "mean"))
+
+        # Display metrics in column order (time metrics + derived per-query column).
+        display_metrics = list(dict.fromkeys(summary.columns.get_level_values(0)))
+
+        print("\n" + "=" * 90)
+        print(f"RUNTIME COMPARISON (agg=mean ± std; seconds; n_samples={n_samples}; ranked by {rank_by})")
+        print(f"Models: {summary.shape[0]} | Metrics: {display_metrics}")
+        print("\nRaw runtime table (rows=models, cols=(metric, stat)):")
+        print(summary.to_string())
+
+        # Fastest (lowest mean) model per metric.
+        best_per_metric = {metric: summary[(metric, "mean")].idxmin() for metric in display_metrics}
+
+        print("\n" + "#" * 90)
+        print("LATEX ROWS (runtime in seconds, mean ± std; red=fastest per column)\n")
+
+        header_cells = ["Model"] + [str(metric).replace("_", r"\_") for metric in display_metrics]
+        print(" & ".join(header_cells) + r" \\")
+        print()
+
+        for model in summary.index:
+            model_name = str(model).replace("_", r"\_")
+            value_cells = []
+            for metric in display_metrics:
+                txt = self._fmt_runtime_latex(
+                    summary.loc[model, (metric, "mean")],
+                    summary.loc[model, (metric, "std")],
+                    is_best = (best_per_metric[metric] == model),
+                )
+                value_cells.append("--" if txt == "--" else f"${txt}$")
+            print(" & ".join([model_name] + value_cells) + r" \\")
+            print()
+
+        return summary
