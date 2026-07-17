@@ -1,11 +1,9 @@
 #!/bin/bash
-
-#SBATCH --job-name=SLipInt-0
+#SBATCH --job-name=Runtime_3d
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4
 #SBATCH --partition=Virtual
-#SBATCH --time=48:00:00
 #SBATCH --mem=10G
 #SBATCH -o logs/%x_%A_%a.out
 #SBATCH -e logs/%x_%A_%a.err
@@ -22,6 +20,7 @@ Options:
   --help                               Show this message
 
 Config file variables:
+  RUN_MODE="pipeline"                  # pipeline or visualize
   MODULES="geometric_split,random_split,tree_models,slip_interpolant"
   # Available models:
   # HuberLinearRegressor, HuberPolynomialRegressor, SVMRegressor, KNNRegressor,
@@ -29,16 +28,21 @@ Config file variables:
   # ResnetRegressor, SLipInterpolant
   SPLITTERS="RandomSplit"
   MODELS="RFRegressor,LightGBMRegressor,SLipInterpolant"
-  CPU_MODELS="RFRegressor,LightGBMRegressor"
-  GPU_MODELS="ResnetRegressor"
   ARRAY_MODELS="RFRegressor,GBRegressor,ResnetRegressor"
   ARRAY_DATASETS="bike,concrete,energy"
+  # When both ARRAY_MODELS and ARRAY_DATASETS are set, the Slurm array runs their
+  # cartesian product: task t picks ARRAY_MODELS[t / n_datasets] and ARRAY_DATASETS[t % n_datasets].
   REQUIRE_EVAL="true"
   SPLITWISE_BASELINE_ONLY="false"
   SPLITWISE_INCLUDE_VARIANTS="true"
   MODELWISE_EVAL="false"
   PER_DATASET_TABLE_EVAL="false"
+  RUNTIME_EVAL="false"
   DATASET_NAMES="bike"
+  VISUALIZE_GRID_SIZE="100"
+  VISUALIZE_PLOT_KINDS="test_only,model_only,absolute_error,test_and_model,train_and_model,train_test_and_model"
+  VISUALIZE_SPLIT_NAMES="Random_Split"
+  VISUALIZE_RUN_IDS="0"
   PYTHON_BIN="python"
   CONDA_ENV_NAME="jupyter_env"
 
@@ -84,14 +88,12 @@ CONFIG_FILE="${SCRIPT_DIR}/job.conf"
 
 MODULES=""
 # Store the comma-separated module list loaded from the config file.
+RUN_MODE="pipeline"
+# Select the wrapper action: pipeline uses run_main_phase, visualize calls main_visualize only.
 SPLITTERS=""
 # Store the comma-separated splitter class list loaded from the config file.
 MODELS=""
 # Store the comma-separated model class list loaded from the config file.
-CPU_MODELS=""
-# Store the comma-separated CPU-only model class list loaded from the config file.
-GPU_MODELS=""
-# Store the comma-separated GPU-only model class list loaded from the config file.
 ARRAY_MODELS=""
 # Store a comma-separated model sweep list where each Slurm array task runs one model.
 ARRAY_DATASETS=""
@@ -106,8 +108,18 @@ MODELWISE_EVAL=""
 # Store the model-wise evaluation flag before normalization.
 PER_DATASET_TABLE_EVAL=""
 # Store the per-dataset table evaluation flag before normalization.
+RUNTIME_EVAL=""
+# Store the runtime evaluation flag before normalization.
 DATASET_NAMES=""
 # Store the comma-separated dataset list loaded from the config file.
+VISUALIZE_GRID_SIZE="100"
+# Store the Visualizer prediction grid resolution.
+VISUALIZE_PLOT_KINDS="test_only,model_only,absolute_error,test_and_model,train_and_model,train_test_and_model"
+# Store comma-separated visualization plot kinds.
+VISUALIZE_SPLIT_NAMES="Random_Split"
+# Store comma-separated split names to visualize; leave empty in config to include all split folders.
+VISUALIZE_RUN_IDS="0"
+# Store comma-separated run ids to visualize; leave empty in config to include all runs.
 PYTHON_BIN="${PYTHON_BIN:-python}"
 # Use the requested Python executable, defaulting to python.
 
@@ -143,16 +155,14 @@ fi
 source "${CONFIG_FILE}"
 # Load pipeline settings from the external shell config file.
 
+RUN_MODE="${RUN_MODE:-pipeline}"
+# Read the selected wrapper action, defaulting to the normal pipeline.
 MODULES="${MODULES:-}"
 # Read the configured module list, or leave empty if omitted.
 SPLITTERS="${SPLITTERS:-}"
 # Read the configured splitter list, or leave empty if omitted.
 MODELS="${MODELS:-}"
 # Read the configured model list, or leave empty if omitted.
-CPU_MODELS="${CPU_MODELS:-}"
-# Read the configured CPU model list, or leave empty if omitted.
-GPU_MODELS="${GPU_MODELS:-}"
-# Read the configured GPU model list, or leave empty if omitted.
 ARRAY_MODELS="${ARRAY_MODELS:-}"
 # Read the configured array-model sweep list, or leave empty if omitted.
 ARRAY_DATASETS="${ARRAY_DATASETS:-}"
@@ -167,12 +177,36 @@ MODELWISE_EVAL="${MODELWISE_EVAL:-}"
 # Read the configured model-wise evaluation flag before normalization.
 PER_DATASET_TABLE_EVAL="${PER_DATASET_TABLE_EVAL:-}"
 # Read the configured per-dataset table evaluation flag before normalization.
+RUNTIME_EVAL="${RUNTIME_EVAL:-}"
+# Read the configured runtime evaluation flag before normalization.
 DATASET_NAMES="${DATASET_NAMES:-}"
 # Read the configured dataset list, or leave empty if omitted.
+VISUALIZE_GRID_SIZE="${VISUALIZE_GRID_SIZE:-100}"
+# Read the visualization grid size.
+VISUALIZE_PLOT_KINDS="${VISUALIZE_PLOT_KINDS:-}"
+# Read the selected visualization plot kinds.
+VISUALIZE_SPLIT_NAMES="${VISUALIZE_SPLIT_NAMES:-}"
+# Read the selected visualization split names.
+VISUALIZE_RUN_IDS="${VISUALIZE_RUN_IDS:-}"
+# Read the selected visualization run ids.
 PYTHON_BIN="${PYTHON_BIN:-python}"
 # Allow the config file to override the Python executable.
 CONDA_ENV_NAME="${CONDA_ENV_NAME:-jupyter_env}"
 # Allow the config file to override the Conda environment name.
+
+case "$(to_lower "${RUN_MODE}")" in
+    pipeline|main)
+        RUN_MODE="pipeline"
+        ;;
+    visualize|visualise|visualization|visualisation)
+        RUN_MODE="visualize"
+        ;;
+    *)
+        printf 'Invalid RUN_MODE: %s (expected pipeline or visualize)\n' "${RUN_MODE}" >&2
+        exit 1
+        ;;
+esac
+# Normalize accepted spelling variants to the internal mode names.
 
 REQUIRE_EVAL="$(normalize_bool "$REQUIRE_EVAL" "False")"
 # Default to skipping evaluation unless the user explicitly enables it.
@@ -184,6 +218,8 @@ MODELWISE_EVAL="$(normalize_bool "$MODELWISE_EVAL" "False")"
 # Default to skipping model-wise comparison unless explicitly enabled.
 PER_DATASET_TABLE_EVAL="$(normalize_bool "$PER_DATASET_TABLE_EVAL" "False")"
 # Default to skipping per-dataset table export unless explicitly enabled.
+RUNTIME_EVAL="$(normalize_bool "$RUNTIME_EVAL" "False")"
+# Default to skipping runtime table export unless explicitly enabled.
 
 echo "REPO_ROOT=${REPO_ROOT}"
 # Print the resolved repository root to the Slurm output stream for debugging.
@@ -223,14 +259,12 @@ python -m pip install -r "${REPO_ROOT}/requirements.txt"
 
 export MODULES
 # Make the module list available to the embedded Python process.
+export RUN_MODE
+# Make the selected wrapper action available to diagnostics and Python.
 export SPLITTERS
 # Make the splitter list available to the embedded Python process.
 export MODELS
 # Make the model list available to the embedded Python process.
-export CPU_MODELS
-# Make the CPU model list available to the phase runner.
-export GPU_MODELS
-# Make the GPU model list available to the phase runner.
 export ARRAY_MODELS
 # Make the model sweep list available to array-task selection logic.
 export ARRAY_DATASETS
@@ -245,8 +279,18 @@ export MODELWISE_EVAL
 # Make the normalized model-wise evaluation flag available to Python.
 export PER_DATASET_TABLE_EVAL
 # Make the normalized per-dataset table evaluation flag available to Python.
+export RUNTIME_EVAL
+# Make the normalized runtime evaluation flag available to Python.
 export DATASET_NAMES
 # Make the dataset list available to Python.
+export VISUALIZE_GRID_SIZE
+# Make the visualization grid size available to Python.
+export VISUALIZE_PLOT_KINDS
+# Make the visualization plot kind filter available to Python.
+export VISUALIZE_SPLIT_NAMES
+# Make the visualization split filter available to Python.
+export VISUALIZE_RUN_IDS
+# Make the visualization run-id filter available to Python.
 export REPO_ROOT
 # Expose the repository root in case downstream code needs it.
 
@@ -309,6 +353,8 @@ printf 'Repository root: %s\n' "${REPO_ROOT}"
 # Echo the resolved repository root into the Slurm output log.
 printf 'Config file: %s\n' "${CONFIG_FILE}"
 # Echo the config file path used for this run.
+printf 'Run mode: %s\n' "${RUN_MODE}"
+# Echo whether this job runs the pipeline or visualization only.
 printf 'Python executable: %s\n' "${PYTHON_BIN}"
 # Echo the Python command being used.
 printf 'Job cache dir: %s\n' "${JOB_CACHE_DIR}"
@@ -319,10 +365,6 @@ printf 'Splitters: %s\n' "${SPLITTERS:-<none>}"
 # Echo the selected splitters or show a placeholder if none were passed.
 printf 'Models: %s\n' "${MODELS:-<none>}"
 # Echo the selected models or show a placeholder if none were passed.
-printf 'CPU models: %s\n' "${CPU_MODELS:-<none>}"
-# Echo the selected CPU models or show a placeholder if none were passed.
-printf 'GPU models: %s\n' "${GPU_MODELS:-<none>}"
-# Echo the selected GPU models or show a placeholder if none were passed.
 printf 'Array models: %s\n' "${ARRAY_MODELS:-<none>}"
 # Echo the model sweep list used for Slurm array sharding.
 printf 'Array datasets: %s\n' "${ARRAY_DATASETS:-<none>}"
@@ -337,8 +379,18 @@ printf 'Modelwise eval: %s\n' "${MODELWISE_EVAL}"
 # Echo the model-wise evaluation flag.
 printf 'Per-dataset table eval: %s\n' "${PER_DATASET_TABLE_EVAL}"
 # Echo the per-dataset table evaluation flag.
+printf 'Runtime eval: %s\n' "${RUNTIME_EVAL}"
+# Echo the runtime evaluation flag.
 printf 'Dataset names: %s\n' "${DATASET_NAMES:-<all>}"
 # Echo the selected dataset names or show a placeholder if all datasets are used.
+printf 'Visualize grid size: %s\n' "${VISUALIZE_GRID_SIZE}"
+# Echo the visualization grid resolution.
+printf 'Visualize plot kinds: %s\n' "${VISUALIZE_PLOT_KINDS:-<default>}"
+# Echo the selected visualization plot kinds or show default handling.
+printf 'Visualize split names: %s\n' "${VISUALIZE_SPLIT_NAMES:-<all>}"
+# Echo the selected visualization split names or show all.
+printf 'Visualize run ids: %s\n' "${VISUALIZE_RUN_IDS:-<all>}"
+# Echo the selected visualization run ids or show all.
 
 csv_pick_by_task() {
     # Pick one comma-separated value based on the current SLURM_ARRAY_TASK_ID.
@@ -361,46 +413,59 @@ csv_pick_by_task() {
     printf '%s' "$(printf '%s' "${values[${task_id}]}" | xargs)"
 }
 
-csv_contains() {
-    # Check whether a CSV list contains an exact token.
+csv_count() {
+    # Count the comma-separated tokens in the given CSV string.
     local csv_values="$1"
-    local needle="$2"
     local IFS=','
-    local token
-    read -r -a _tokens <<< "${csv_values}"
-    for token in "${_tokens[@]}"; do
-        token="$(printf '%s' "${token}" | xargs)"
-        if [[ "${token}" == "${needle}" ]]; then
-            return 0
-        fi
-    done
-    return 1
+    local -a tokens
+    read -r -a tokens <<< "${csv_values}"
+    printf '%s' "${#tokens[@]}"
 }
 
-if [[ -n "${ARRAY_MODELS}" ]]; then
+csv_pick_at() {
+    # Pick the value at the given index from a CSV list.
+    local csv_values="$1"
+    local idx="$2"
+    local -a values
+    local IFS=','
+    read -r -a values <<< "${csv_values}"
+
+    if (( idx < 0 || idx >= ${#values[@]} )); then
+        printf 'Index %s is out of range for list of size %s\n' "${idx}" "${#values[@]}" >&2
+        exit 1
+    fi
+
+    printf '%s' "$(printf '%s' "${values[${idx}]}" | xargs)"
+}
+
+if [[ -n "${ARRAY_DATASETS}" && -n "${ARRAY_MODELS}" ]]; then
+    # Shard by (dataset, model) pair: each array task runs one cell of the cartesian product.
+    # Iteration order: model is the outer loop, dataset is the inner loop.
+    TASK_ID="${SLURM_ARRAY_TASK_ID:-0}"
+    N_DATASETS="$(csv_count "${ARRAY_DATASETS}")"
+    if (( N_DATASETS == 0 )); then
+        echo "ARRAY_DATASETS is empty after parsing" >&2
+        exit 1
+    fi
+    N_MODELS="$(csv_count "${ARRAY_MODELS}")"
+    N_TOTAL=$(( N_DATASETS * N_MODELS ))
+    if (( TASK_ID >= N_TOTAL )); then
+        printf 'SLURM_ARRAY_TASK_ID=%s exceeds %s models * %s datasets = %s pairs\n' "${TASK_ID}" "${N_MODELS}" "${N_DATASETS}" "${N_TOTAL}" >&2
+        exit 1
+    fi
+    MODEL_IDX=$(( TASK_ID / N_DATASETS ))
+    DATASET_IDX=$(( TASK_ID % N_DATASETS ))
+    SELECTED_DATASET="$(csv_pick_at "${ARRAY_DATASETS}" "${DATASET_IDX}")"
+    SELECTED_MODEL="$(csv_pick_at "${ARRAY_MODELS}" "${MODEL_IDX}")"
+    DATASET_NAMES="${SELECTED_DATASET}"
+    MODELS="${SELECTED_MODEL}"
+    printf 'Array-selected pair (task=%s): dataset=%s, model=%s\n' "${TASK_ID}" "${SELECTED_DATASET}" "${SELECTED_MODEL}"
+elif [[ -n "${ARRAY_MODELS}" ]]; then
     # Shard by model: each array task runs exactly one model.
     SELECTED_MODEL="$(csv_pick_by_task "${ARRAY_MODELS}")"
+    MODELS="${SELECTED_MODEL}"
     printf 'Array-selected model: %s\n' "${SELECTED_MODEL}"
-
-    if [[ -n "${CPU_MODELS}" || -n "${GPU_MODELS}" ]]; then
-        if csv_contains "${GPU_MODELS}" "${SELECTED_MODEL}"; then
-            GPU_MODELS="${SELECTED_MODEL}"
-            CPU_MODELS=""
-        elif csv_contains "${CPU_MODELS}" "${SELECTED_MODEL}"; then
-            CPU_MODELS="${SELECTED_MODEL}"
-            GPU_MODELS=""
-        else
-            # Fall back to single-pass mode if the selected model is outside CPU/GPU buckets.
-            MODELS="${SELECTED_MODEL}"
-            CPU_MODELS=""
-            GPU_MODELS=""
-        fi
-    else
-        MODELS="${SELECTED_MODEL}"
-    fi
-fi
-
-if [[ -n "${ARRAY_DATASETS}" ]]; then
+elif [[ -n "${ARRAY_DATASETS}" ]]; then
     # Shard by dataset: each array task runs exactly one dataset.
     SELECTED_DATASET="$(csv_pick_by_task "${ARRAY_DATASETS}")"
     DATASET_NAMES="${SELECTED_DATASET}"
@@ -408,22 +473,18 @@ if [[ -n "${ARRAY_DATASETS}" ]]; then
 fi
 
 run_main_phase() {
-    # Run one pipeline phase with optional CPU-only device visibility.
+    # Run one pipeline phase with Slurm-provided GPU visibility.
     local phase_name="$1"
     local phase_splitters="$2"
     local phase_models="$3"
     local phase_require_eval="$4"
-    local phase_device="$5"
 
     printf 'Running phase: %s\n' "${phase_name}"
 
-    if [[ "${phase_device}" == "cpu" ]]; then
-        # Hide GPUs from this subprocess so CPU-bound models never claim CUDA.
-        CUDA_VISIBLE_DEVICES="" \
-        PHASE_SPLITTERS="${phase_splitters}" \
-        PHASE_MODELS="${phase_models}" \
-        PHASE_REQUIRE_EVAL="${phase_require_eval}" \
-        "${PYTHON_BIN}" - <<'PY'
+    PHASE_SPLITTERS="${phase_splitters}" \
+    PHASE_MODELS="${phase_models}" \
+    PHASE_REQUIRE_EVAL="${phase_require_eval}" \
+    "${PYTHON_BIN}" - <<'PY'
 import os
 from main import main
 
@@ -442,59 +503,53 @@ main(
     splitwise_include_variants=os.environ["SPLITWISE_INCLUDE_VARIANTS"] == "True",
     modelwise_eval=os.environ["MODELWISE_EVAL"] == "True",
     per_dataset_table_eval=os.environ["PER_DATASET_TABLE_EVAL"] == "True",
+    runtime_eval=os.environ["RUNTIME_EVAL"] == "True",
     dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
 )
 PY
-    else
-        # Inherit Slurm GPU visibility for GPU-capable phases.
-        PHASE_SPLITTERS="${phase_splitters}" \
-        PHASE_MODELS="${phase_models}" \
-        PHASE_REQUIRE_EVAL="${phase_require_eval}" \
-        "${PYTHON_BIN}" - <<'PY'
-import os
-from main import main
-
-def parse_csv(value: str):
-    if not value:
-        return None
-    parsed = [item.strip() for item in value.split(",") if item.strip()]
-    return parsed or None
-
-main(
-    modules=parse_csv(os.environ.get("MODULES", "")),
-    splitters=parse_csv(os.environ.get("PHASE_SPLITTERS", "")),
-    models=parse_csv(os.environ.get("PHASE_MODELS", "")),
-    require_eval=os.environ["PHASE_REQUIRE_EVAL"] == "True",
-    splitwise_baseline_only=os.environ["SPLITWISE_BASELINE_ONLY"] == "True",
-    splitwise_include_variants=os.environ["SPLITWISE_INCLUDE_VARIANTS"] == "True",
-    modelwise_eval=os.environ["MODELWISE_EVAL"] == "True",
-    per_dataset_table_eval=os.environ["PER_DATASET_TABLE_EVAL"] == "True",
-    dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
-)
-PY
-    fi
 }
 
-if [[ -n "${CPU_MODELS}" || -n "${GPU_MODELS}" ]]; then
-    # Mixed scheduling mode: split once, train CPU/GPU model groups separately, then evaluate once.
-    if [[ -n "${SPLITTERS}" ]]; then
-        run_main_phase "split" "${SPLITTERS}" "" "False" "gpu"
-    fi
+run_visualize_phase() {
+    # Run only the visualization procedure from src/main.py.
+    printf 'Running phase: visualize-only\n'
 
-    if [[ -n "${CPU_MODELS}" ]]; then
-        run_main_phase "train-cpu-models" "" "${CPU_MODELS}" "False" "cpu"
-    fi
+    "${PYTHON_BIN}" - <<'PY'
+import os
+from main import _string2class, main_visualize
 
-    if [[ -n "${GPU_MODELS}" ]]; then
-        run_main_phase "train-gpu-models" "" "${GPU_MODELS}" "False" "gpu"
-    fi
+def parse_csv(value: str):
+    if not value:
+        return None
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    return parsed or None
 
-    if [[ "${REQUIRE_EVAL}" == "True" ]]; then
-        run_main_phase "evaluate" "" "" "True" "gpu"
-    fi
+model_names = parse_csv(os.environ.get("MODELS", ""))
+if model_names is None:
+    raise ValueError(
+        "Visualization mode requires MODELS or ARRAY_MODELS to select at least one model."
+    )
+
+model_classes = _string2class(
+    modules=parse_csv(os.environ.get("MODULES", "")),
+    inputs=model_names,
+    conversion_engine="models",
+)
+
+main_visualize(
+    model_classes,
+    dataset_names=parse_csv(os.environ.get("DATASET_NAMES", "")),
+    grid_size=int(os.environ.get("VISUALIZE_GRID_SIZE", "100")),
+    plot_kinds=parse_csv(os.environ.get("VISUALIZE_PLOT_KINDS", "")),
+    split_names=parse_csv(os.environ.get("VISUALIZE_SPLIT_NAMES", "")),
+    run_ids=parse_csv(os.environ.get("VISUALIZE_RUN_IDS", "")),
+)
+PY
+}
+
+if [[ "${RUN_MODE}" == "visualize" ]]; then
+    run_visualize_phase
 else
-    # Backward-compatible single-pass mode.
-    run_main_phase "single-pass" "${SPLITTERS}" "${MODELS}" "${REQUIRE_EVAL}" "gpu"
+    run_main_phase "single-pass" "${SPLITTERS}" "${MODELS}" "${REQUIRE_EVAL}"
 fi
 
 T2=$(date +%s)
