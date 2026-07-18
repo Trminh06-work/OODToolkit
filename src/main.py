@@ -112,6 +112,7 @@ def main_split(
     dataset_names: List[str] = None,
     test_size: float = DEFAULT_TEST_SIZE,
     data_dir: Path = DEFAULT_DATA_DIR,
+    add_noise_to_train: bool = False,
 ):
     datasets = _load_datasets(data_dir = data_dir, dataset_names = dataset_names)
 
@@ -119,7 +120,12 @@ def main_split(
         print(f"Processing dataset: {dataset_name}")
         for splitter in splitters:
             print(f"  Running splitter: {splitter.__class__.__name__}")
-            splitter.split(file_name = dataset_name, df = df.copy(deep=True), test_size = test_size)
+            splitter.split(
+                file_name = dataset_name,
+                df = df.copy(deep = True),
+                test_size = test_size,
+                add_noise_to_train = add_noise_to_train,
+            )
 
 
 def main_train(
@@ -142,18 +148,23 @@ def main_eval(
     splitwise_include_variants: bool = False,
     modelwise_eval: bool = False,
     per_dataset_table_eval: bool = False,
+    runtime_eval: bool = False,
+    dataset_names: List = None
 ):
-    Analyst = AnalystModel(results_root = DEFAULT_RESULTS_DIR, split_data_root = DEFAULT_SPLIT_DIR)
+    if dataset_names is None:
+        raise ValueError("dataset_names must be specified")
+    Analyst = AnalystModel(results_root = DEFAULT_RESULTS_DIR, split_data_root = DEFAULT_SPLIT_DIR, key_metric = "nRMSE")
 
     print("============================================================")
     print("Running split-agnostic evaluation on baseline models")
-    Analyst.split_agnostic_test()
+    Analyst.split_agnostic_test(dataset_names = dataset_names)
 
     print("============================================================")
     print("Running split-wise evaluation")
     Analyst.split_wise_test(
         baseline_only = splitwise_baseline_only,
         include_variants = splitwise_include_variants,
+        dataset_names = dataset_names,
     )
 
     if modelwise_eval:
@@ -162,6 +173,7 @@ def main_eval(
         Analyst.model_wise_test(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
+            dataset_names = dataset_names,
         )
 
         print("============================================================")
@@ -169,7 +181,8 @@ def main_eval(
         Analyst.model_wise_vs_random_latex_table(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
-            baseline_split = "Random_Split"
+            baseline_split = "Random_Split",
+            dataset_names = dataset_names,
         )
 
         print("============================================================")
@@ -177,6 +190,7 @@ def main_eval(
         Analyst.robustness_model_comparison_latex(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
+            dataset_names = dataset_names,
         )
 
     if per_dataset_table_eval:
@@ -186,6 +200,16 @@ def main_eval(
             baseline_only = splitwise_baseline_only,
             include_variants = splitwise_include_variants,
             print_latex = True,
+            dataset_names = dataset_names,
+        )
+
+    if runtime_eval:
+        print("============================================================")
+        print("Running runtime performance comparison")
+        Analyst.runtime_comparison_latex(
+            baseline_only = splitwise_baseline_only,
+            include_variants = splitwise_include_variants,
+            dataset_names = dataset_names,
         )
 
 
@@ -200,6 +224,7 @@ def main(
     splitwise_include_variants: bool = False,
     modelwise_eval: bool = False,
     per_dataset_table_eval: bool = False,
+    runtime_eval: bool = False,
     dataset_names: List[str] = None,
     seeds: List[int] = None,
     test_size: float = DEFAULT_TEST_SIZE,
@@ -226,6 +251,7 @@ def main(
         splitwise_include_variants: bool, False as default. Include model variants as separate competitors in split-wise tests
         modelwise_eval: bool, False as default. Run model-wise statistical tests that compare split types for each model
         per_dataset_table_eval: bool, False as default. Print one full nRMSE table per dataset (models x splits), plus LaTeX rows
+        runtime_eval: bool, False as default. Print a runtime performance table (models x training/inference time), plus LaTeX rows
     Note:
         The split-agnostic table only uses the baseline configuration. In contrast, the split-wise tables are more flexible.
             To construct a full split-wise table including all model variants set splitwise_baseline_only = False and splitwise_include_variants = True.
@@ -257,6 +283,7 @@ def main(
             dataset_names = dataset_names,
             test_size = test_size,
             data_dir = data_dir,
+            add_noise_to_train = True
         )
     else:
         print("Partitioning mechanism is not activated")
@@ -278,20 +305,30 @@ def main(
             splitwise_include_variants = splitwise_include_variants,
             modelwise_eval = modelwise_eval,
             per_dataset_table_eval = per_dataset_table_eval,
+            runtime_eval = runtime_eval,
+            dataset_names = dataset_names
         )
 
 
 if __name__ == "__main__":
     split_modules = ["geometric_split", "marginal_distribution_shift", "random_split"]
-    model_modules = ["statistical_models", "tree_models", "resnet"]
+    model_modules = ["statistical_models", "tree_models", "resnet", "slip_interpolant", "mlp"]
     modules = split_modules + model_modules
-    splitters = None # ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
+    splitters = ["BasicGeometricSplit", "RandomSplit", "MarginalDistributionSplit"]
     models = [
         # "HuberLinearRegressor", "HuberPolynomialRegressor", "KNNRegressor", "SVMRegressor",
         # "DTRegressor", "RFRegressor", "GBRegressor", "ABRegressor", "XGBRegressor", "LightGBMRegressor",
-        # "ResnetRegressor",
+        # "ResnetRegressor", "SLipInterpolant"
+        # "BaselineMLPRegressor", "RealMLPRegressor", "TabiclRegressor"
     ]
-    dataset_names = ["synthetic_0"]
+    dataset_names = [
+        "synthetic_0-100000K-5d", "synthetic_1-100000K-5d", "synthetic_2-100000K-5d", "synthetic_3-100000K-5d", "synthetic_4-100000K-5d", "synthetic_5-100000K-5d", "synthetic_6-100000K-5d",
+        "synthetic_0-100000K-10d", "synthetic_1-100000K-10d", "synthetic_2-100000K-10d", "synthetic_3-100000K-10d", "synthetic_4-100000K-10d", "synthetic_5-100000K-10d", "synthetic_6-100000K-10d",
+    ]
+    # dataset_names = [
+    #     "synthetic_0-100000K-3d", "synthetic_1-100000K-3d", "synthetic_2-100000K-3d", "synthetic_3-100000K-3d", "synthetic_4-100000K-3d", "synthetic_5-100000K-3d", "synthetic_6-100000K-3d",
+    #     "synthetic_5-100000K-5d", "synthetic_6-100000K-5d", "synthetic_5-100000K-10d", "synthetic_6-100000K-10d"
+    # ]
     main(
         modules,
         splitters,
@@ -301,5 +338,6 @@ if __name__ == "__main__":
         splitwise_include_variants = False,
         modelwise_eval = True,
         per_dataset_table_eval = False,
+        runtime_eval = False,
         dataset_names = dataset_names
     )
